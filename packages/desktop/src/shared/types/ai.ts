@@ -116,10 +116,15 @@ export const DEFAULT_BASE_URLS: Record<AIProviderId, string> = {
 /**
  * Sensible starting model per provider. LM Studio serves whatever the user has
  * loaded, so its default is a placeholder the user is expected to replace.
+ *
+ * The OpenAI default tracks the model its docs recommend "for most workloads".
+ * Note that every current OpenAI model is in the GPT-5 family and therefore
+ * requires `max_completion_tokens` rather than `max_tokens` — see
+ * `resolveTokenLimitField` in main/ai/providers/openaiCompatible.ts.
  */
 export const DEFAULT_MODELS: Record<AIProviderId, string> = {
   anthropic: 'claude-opus-5',
-  openai: 'gpt-4o',
+  openai: 'gpt-5.6',
   openrouter: 'anthropic/claude-opus-5',
   lmstudio: 'local-model'
 }

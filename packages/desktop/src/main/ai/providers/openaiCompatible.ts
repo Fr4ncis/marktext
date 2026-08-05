@@ -1,6 +1,7 @@
 import type {
   AICompletionRequest,
   AICompletionResult,
+  AIProviderId,
   AIProviderSettings
 } from '../../../shared/types/ai'
 import { REWRITE_SYSTEM_PROMPT } from '../../../shared/types/ai'
@@ -8,7 +9,40 @@ import { aiError, classifyThrown, kindFromStatus, messageFromErrorBody } from '.
 
 // One adapter serves OpenAI, OpenRouter, and LM Studio: all three expose
 // POST {baseUrl}/chat/completions with OpenAI's request and response shape.
-// Only the auth header and a couple of optional courtesy headers differ.
+// Only the auth header, a couple of optional courtesy headers, and the name of
+// the output-length parameter differ.
+
+/**
+ * Name of the parameter capping output length.
+ *
+ * OpenAI removed `max_tokens` from Chat Completions for the GPT-5 and o-series
+ * models — sending it returns 400 "Unsupported parameter: 'max_tokens' is not
+ * supported with this model. Use 'max_completion_tokens' instead." Every
+ * current OpenAI model is in that family, so OpenAI always gets the new name.
+ *
+ * OpenRouter and LM Studio both document `max_tokens` and not the newer name,
+ * so they keep the original. `resolveTokenLimitField` is exported for tests.
+ */
+export const resolveTokenLimitField = (provider: AIProviderId): string =>
+  provider === 'openai' ? 'max_completion_tokens' : 'max_tokens'
+
+/** The other spelling, used for the one-shot retry below. */
+const alternateTokenLimitField = (field: string): string =>
+  field === 'max_tokens' ? 'max_completion_tokens' : 'max_tokens'
+
+/**
+ * Whether a rejection is the server objecting to the output-length parameter
+ * specifically, rather than to something else in the request.
+ *
+ * Three independently-evolving services share this adapter, so rather than
+ * pin a support matrix that silently rots, a 400 naming the parameter earns
+ * one retry with the other spelling. Exported for tests.
+ */
+export const isTokenLimitFieldRejection = (status: number, body: string): boolean => {
+  if (status !== 400 && status !== 422) return false
+  const lower = body.toLowerCase()
+  return lower.includes('max_tokens') || lower.includes('max_completion_tokens')
+}
 
 /** Shape we read back. Everything else in the response is ignored. */
 interface ChatCompletionResponse {
@@ -47,36 +81,55 @@ export const completeWithOpenAICompatible = async(
   apiKey: string | null,
   signal: AbortSignal
 ): Promise<AICompletionResult> => {
-  const body = {
-    model: settings.model,
-    max_tokens: settings.maxTokens,
-    messages: [
-      { role: 'system', content: REWRITE_SYSTEM_PROMPT },
-      { role: 'user', content: `${request.prompt}\n\n---\n\n${request.selection}` }
-    ]
-  }
+  // `system` is accepted by every target: OpenAI silently treats it as a
+  // `developer` message on the reasoning models, so no per-provider branch.
+  const messages = [
+    { role: 'system', content: REWRITE_SYSTEM_PROMPT },
+    { role: 'user', content: `${request.prompt}\n\n---\n\n${request.selection}` }
+  ]
 
-  let response: Response
-  try {
-    response = await fetch(endpointFor(settings.baseUrl), {
+  const send = async(tokenField: string): Promise<Response> =>
+    fetch(endpointFor(settings.baseUrl), {
       method: 'POST',
       headers: buildHeaders(settings, apiKey),
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        model: settings.model,
+        [tokenField]: settings.maxTokens,
+        messages
+      }),
       signal
     })
+
+  const tokenField = resolveTokenLimitField(settings.provider)
+  let response: Response
+  try {
+    response = await send(tokenField)
   } catch (error) {
     return { ok: false, error: classifyThrown(error) }
   }
 
   if (!response.ok) {
-    const raw = await response.text().catch(() => '')
-    return {
-      ok: false,
-      error: aiError(
-        kindFromStatus(response.status),
-        messageFromErrorBody(raw, response.status),
-        response.status
-      )
+    let raw = await response.text().catch(() => '')
+
+    // A server that rejects this spelling almost certainly wants the other one.
+    if (isTokenLimitFieldRejection(response.status, raw)) {
+      try {
+        response = await send(alternateTokenLimitField(tokenField))
+      } catch (error) {
+        return { ok: false, error: classifyThrown(error) }
+      }
+      raw = response.ok ? '' : await response.text().catch(() => '')
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: aiError(
+          kindFromStatus(response.status),
+          messageFromErrorBody(raw, response.status),
+          response.status
+        )
+      }
     }
   }
 

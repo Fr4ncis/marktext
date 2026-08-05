@@ -281,7 +281,7 @@ const refreshCredentialStatus = async (): Promise<void> => {
 
 /**
  * Switching provider also swaps the model and clears the base URL, because a
- * model name is provider-specific — leaving `gpt-4o` selected after switching
+ * model name is provider-specific — leaving `gpt-5.6` selected after switching
  * to Anthropic guarantees a 404 the user has to diagnose.
  */
 const handleProviderChange = async (value: string | number | boolean): Promise<void> => {
