@@ -251,7 +251,8 @@
       "files": "文件",
       "search": "搜索",
       "toc": "目录",
-      "settings": "设置"
+      "settings": "设置",
+      "aiComments": "AI comments"
     }
   },
   "commandPalette": {

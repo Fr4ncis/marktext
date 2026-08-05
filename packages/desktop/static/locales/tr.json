@@ -251,7 +251,8 @@
       "files": "Dosyalar",
       "search": "Ara",
       "toc": "İçindekiler",
-      "settings": "Ayarlar"
+      "settings": "Ayarlar",
+      "aiComments": "AI comments"
     }
   },
   "commandPalette": {

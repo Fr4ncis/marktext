@@ -251,7 +251,8 @@
       "files": "Archivos",
       "search": "Buscar",
       "toc": "Tabla de Contenidos",
-      "settings": "Configuración"
+      "settings": "Configuración",
+      "aiComments": "AI comments"
     }
   },
   "commandPalette": {

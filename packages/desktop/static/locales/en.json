@@ -251,7 +251,8 @@
       "files": "Files",
       "search": "Search",
       "toc": "Table of Contents",
-      "settings": "Settings"
+      "settings": "Settings",
+      "aiComments": "AI comments"
     }
   },
   "commandPalette": {

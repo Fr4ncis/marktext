@@ -140,6 +140,14 @@ import {
   toDocumentRange,
   type DocumentRange
 } from '@/util/documentRange'
+import { useAiCommentsStore } from '@/store/aiComments'
+import {
+  applyAiComment,
+  removeAiComment,
+  resolveAiComment,
+  stripAiComments,
+  type TrackedAiComment
+} from '@shared/types/aiComments'
 
 // Importing the engine entrypoint auto-injects its editor CSS (the muya.ts
 // module imports its stylesheets at load time). Desktop themes still target the
@@ -211,6 +219,7 @@ const props = defineProps<{
 // Get stores
 const preferencesStore = usePreferencesStore()
 const editorStore = useEditorStore()
+const aiCommentsStore = useAiCommentsStore()
 const projectStore = useProjectStore()
 
 // Use storeToRefs to extract reactive properties from the stores
@@ -1314,7 +1323,9 @@ const handleExport = async (options: unknown) => {
 
   const extraCss = await getCssForOptions(opts as unknown as PdfCssOptions)
   const htmlToc = getHtmlToc(editor.value.getTOC(), opts as unknown as HtmlTocOptions)
-  const markdown = editor.value.getMarkdown()
+  // Review notes are working state, not content — they must not reach a PDF,
+  // a print job, or an exported HTML file.
+  const markdown = stripAiComments(editor.value.getMarkdown())
   const header = (opts.header ?? null) as HeaderFooterPart | null
   const footer = (opts.footer ?? null) as HeaderFooterPart | null
 
@@ -1531,6 +1542,82 @@ const handleAiApplyResult = (payload: unknown) => {
   })
 }
 
+// ---------------------------------------------------------------------------
+// AI review comments
+//
+// Markers live in the document text, so the editor's only jobs are to hand the
+// current markdown to the queue whenever it changes, and to perform the two
+// document edits (accept / dismiss) that the review panel asks for.
+
+/**
+ * Scanning is debounced because `json-change` fires per keystroke and a scan
+ * walks the whole document. It also gives a marker a moment to settle before
+ * its request is dispatched.
+ */
+const AI_COMMENT_SCAN_DELAY = 600
+let aiCommentScanTimer: ReturnType<typeof setTimeout> | null = null
+
+const syncAiComments = (fileId: string, markdown: string): void => {
+  if (aiCommentScanTimer) clearTimeout(aiCommentScanTimer)
+  aiCommentScanTimer = setTimeout(() => {
+    aiCommentsStore.SYNC(fileId, markdown)
+  }, AI_COMMENT_SCAN_DELAY)
+}
+
+/**
+ * Applies a document edit derived from a comment, re-resolving the marker
+ * against live text first. Returns false when the marker can no longer be
+ * found or its paragraph has changed, so the caller can explain rather than
+ * corrupt an unrelated span.
+ */
+const editWithAiComment = (
+  comment: TrackedAiComment,
+  edit: (markdown: string, resolved: TrackedAiComment) => string | null
+): boolean => {
+  if (!editor.value) return false
+  const markdown = editor.value.getMarkdown()
+
+  const fresh = resolveAiComment(markdown, comment)
+  if (!fresh) return false
+
+  const updated = edit(markdown, { ...comment, ...fresh })
+  if (updated === null) return false
+
+  editor.value.replaceContent(updated)
+  return true
+}
+
+const handleAiCommentAccept = (payload: unknown) => {
+  const comment = payload as TrackedAiComment
+  if (!comment.suggestion) return
+
+  const applied = editWithAiComment(comment, (markdown, resolved) =>
+    applyAiComment(markdown, resolved, comment.suggestion as string, resolved.target)
+  )
+
+  if (!applied) {
+    notice.notify({
+      title: 'AI comments',
+      message:
+        'That paragraph changed since the suggestion was generated, so it was not applied. Run the comment again.',
+      type: 'warning',
+      time: 6000
+    })
+    return
+  }
+  // The marker is gone from the document, so the tracked comment goes too —
+  // waiting for the debounced scan would leave a resolved entry on screen.
+  aiCommentsStore.FORGET(comment.id)
+}
+
+const handleAiCommentDismiss = (payload: unknown) => {
+  const comment = payload as TrackedAiComment
+  const removed = editWithAiComment(comment, (markdown, resolved) =>
+    removeAiComment(markdown, resolved)
+  )
+  if (removed) aiCommentsStore.FORGET(comment.id)
+}
+
 // handle `duplicate`, `delete`, `create paragraph below`
 const handleParagraph = (type: unknown) => {
   if (sourceCode.value) {
@@ -1586,6 +1673,10 @@ const setMarkdownToEditor = (payload: unknown) => {
     // — the engine may normalize trailing newlines / whitespace on round-trip.
     if (id) {
       resetSyntheticHistory(id, editor.value.getMarkdown())
+      // Populate the review panel with any markers the file already carries.
+      // The store leaves a file's first scan `pending` rather than dispatching,
+      // so opening a document with twenty comments costs nothing until asked.
+      aiCommentsStore.SYNC(id, editor.value.getMarkdown())
     }
     if (newCursor) {
       applyCursor(editor.value, newCursor)
@@ -1912,6 +2003,11 @@ onMounted(() => {
   // The first document's content is set via constructor options, so no
   // `file-loaded` / `setMarkdownToEditor` runs for it — seed its TOC here.
   editorStore.UPDATE_TOC(muya.getTOC())
+  // The mount-loaded document never fires `file-loaded`, so seed its comment
+  // scan here for the same reason the TOC is seeded above.
+  if (currentFile.value?.id) {
+    aiCommentsStore.SYNC(currentFile.value.id, muya.getMarkdown())
+  }
 
   // Seed the save-tracking baseline for the mount-loaded document (from the
   // engine's OWN serialization, same reason as setMarkdownToEditor). Without
@@ -1956,6 +2052,8 @@ onMounted(() => {
   bus.on('file-changed', handleFileChange)
   bus.on('ai::run-prompt', handleAiRunPrompt)
   bus.on('ai::apply-result', handleAiApplyResult)
+  bus.on('ai-comments::accept', handleAiCommentAccept)
+  bus.on('ai-comments::dismiss', handleAiCommentDismiss)
   bus.on('flush-active-editor', flushActiveEditor)
   bus.on('editor-blur', blurEditor)
   bus.on('editor-focus', focusEditor)
@@ -2004,6 +2102,7 @@ onMounted(() => {
       toc: editor.value.getTOC(),
       blocks: editor.value.getState()
     })
+    syncAiComments(id, markdown)
   })
 
   // The engine does not emit `scroll`; listen on the scroll container directly
@@ -2111,6 +2210,9 @@ onBeforeUnmount(() => {
   bus.off('file-changed', handleFileChange)
   bus.off('ai::run-prompt', handleAiRunPrompt)
   bus.off('ai::apply-result', handleAiApplyResult)
+  bus.off('ai-comments::accept', handleAiCommentAccept)
+  bus.off('ai-comments::dismiss', handleAiCommentDismiss)
+  if (aiCommentScanTimer) clearTimeout(aiCommentScanTimer)
   bus.off('flush-active-editor', flushActiveEditor)
   bus.off('editor-blur', blurEditor)
   bus.off('editor-focus', focusEditor)
