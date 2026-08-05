@@ -437,7 +437,8 @@
       "spelling": "Ortografía",
       "theme": "Tema",
       "image": "Imagen",
-      "keybindings": "Atajos de Teclado"
+      "keybindings": "Atajos de Teclado",
+      "ai": "AI"
     },
     "general": {
       "title": "General",

@@ -17,6 +17,14 @@ import type {
   IpcMainEventChannels,
   BootInfo
 } from '@shared/types/ipc'
+import type {
+  AICompletionRequest,
+  AICompletionResult,
+  AIConnectionTestResult,
+  AICredentialStatus,
+  AIProviderId,
+  AIProviderSettings
+} from '@shared/types/ai'
 
 type RendererEventListener<K extends keyof IpcMainEventChannels> = (
   event: IpcRendererEvent,
@@ -228,6 +236,22 @@ const fontsAPI = {
   list: () => invoke('mt::fonts::list')
 }
 
+// The renderer never holds an API key: it sends one here to be encrypted, and
+// afterwards can only ask whether a key exists, never read it back.
+const aiAPI = {
+  complete: (
+    requestId: string,
+    settings: AIProviderSettings,
+    request: AICompletionRequest
+  ): Promise<AICompletionResult> => invoke('mt::ai::complete', requestId, settings, request),
+  cancel: (requestId: string): void => ipcRenderer.send('mt::ai::cancel', requestId),
+  testConnection: (settings: AIProviderSettings): Promise<AIConnectionTestResult> =>
+    invoke('mt::ai::test-connection', settings),
+  setApiKey: (provider: AIProviderId, key: string) => invoke('mt::ai::set-key', provider, key),
+  credentialStatus: (): Promise<AICredentialStatus> => invoke('mt::ai::credential-status'),
+  isEncryptionAvailable: (): Promise<boolean> => invoke('mt::ai::encryption-available')
+}
+
 const electronAPI = {
   ipcRenderer: ipcWrapper,
   shell: shellAPI,
@@ -296,6 +320,7 @@ try {
   contextBridge.exposeInMainWorld('ripgrep', ripgrepAPI)
   contextBridge.exposeInMainWorld('uploader', uploaderAPI)
   contextBridge.exposeInMainWorld('fonts', fontsAPI)
+  contextBridge.exposeInMainWorld('aiAssistant', aiAPI)
 } catch (error) {
   console.error(error)
 }

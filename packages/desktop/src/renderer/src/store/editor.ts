@@ -10,6 +10,7 @@ import {
 } from './help'
 import notice from '../services/notification'
 import {
+  AiActionCommand,
   FileEncodingCommand,
   LineEndingCommand,
   QuickOpenCommand,
@@ -885,6 +886,7 @@ export const useEditorStore = defineStore('editor', {
           'cmd::register-command',
           new TrailingNewlineCommand(this)
         )
+        bus.emit('cmd::register-command', new AiActionCommand())
 
         setTimeout(() => {
           window.electron.ipcRenderer.send('mt::request-keybindings')

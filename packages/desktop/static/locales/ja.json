@@ -437,7 +437,8 @@
       "spelling": "スペルチェック",
       "theme": "テーマ",
       "image": "画像",
-      "keybindings": "キーバインド"
+      "keybindings": "キーバインド",
+      "ai": "AI"
     },
     "general": {
       "title": "全般",

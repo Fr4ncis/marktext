@@ -25,6 +25,14 @@ export const useListenForMainStore = defineStore('listenForMain', () => {
     })
   }
 
+  // The editor context menu is built in main, so an AI action arrives as an
+  // IPC event carrying only the prompt id — the selection stays in the renderer.
+  function LISTEN_FOR_AI(): void {
+    window.electron.ipcRenderer.on('mt::ai::run-prompt', (_e, promptId) => {
+      bus.emit('ai::run-prompt', promptId)
+    })
+  }
+
   function LISTEN_FOR_SHOW_DIALOG(): void {
     window.electron.ipcRenderer.on('mt::about-dialog', () => {
       bus.emit('aboutDialog')
@@ -50,6 +58,7 @@ export const useListenForMainStore = defineStore('listenForMain', () => {
     EDITOR_EDIT_ACTION,
     LISTEN_FOR_EDIT,
     LISTEN_FOR_SHOW_DIALOG,
-    LISTEN_FOR_PARAGRAPH_INLINE_STYLE
+    LISTEN_FOR_PARAGRAPH_INLINE_STYLE,
+    LISTEN_FOR_AI
   }
 })

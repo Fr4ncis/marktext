@@ -12,6 +12,14 @@ import type {
 } from '@shared/types/ipc'
 import type { MenuTemplate, MenuPopupPosition } from '@shared/types/menu'
 import type { SerializedStat } from '@shared/types/files'
+import type {
+  AICompletionRequest,
+  AICompletionResult,
+  AIConnectionTestResult,
+  AICredentialStatus,
+  AIProviderId,
+  AIProviderSettings
+} from '@shared/types/ai'
 
 declare global {
   // ---- Build-time defines (electron-vite `define`) ----
@@ -166,6 +174,24 @@ declare global {
     list(): Promise<string[]>
   }
 
+  // Provider calls run in main; this surface deliberately offers no way to read
+  // a stored API key back out — only to write one and ask whether it exists.
+  interface AiAssistantAPI {
+    complete(
+      requestId: string,
+      settings: AIProviderSettings,
+      request: AICompletionRequest
+    ): Promise<AICompletionResult>
+    cancel(requestId: string): void
+    testConnection(settings: AIProviderSettings): Promise<AIConnectionTestResult>
+    setApiKey(
+      provider: AIProviderId,
+      key: string
+    ): Promise<{ ok: true } | { ok: false; message: string }>
+    credentialStatus(): Promise<AICredentialStatus>
+    isEncryptionAvailable(): Promise<boolean>
+  }
+
   interface ProcessShim {
     platform: NodeJS.Platform
     arch?: string
@@ -185,6 +211,7 @@ declare global {
     ripgrep: RipgrepAPI
     uploader: UploaderAPI
     fonts: FontsAPI
+    aiAssistant: AiAssistantAPI
     process: ProcessShim
     rgPath: string
     // Set by the legacy editor store at runtime; consumed by muya internals.

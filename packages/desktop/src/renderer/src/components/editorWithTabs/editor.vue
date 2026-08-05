@@ -133,6 +133,13 @@ import { useProjectStore } from '@/store/project'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { SyntheticHistory, type IFileHistoryLike } from './syntheticHistory'
+import {
+  isNonEmptyRange,
+  offsetToLineCh,
+  replaceRange,
+  toDocumentRange,
+  type DocumentRange
+} from '@/util/documentRange'
 
 // Importing the engine entrypoint auto-injects its editor CSS (the muya.ts
 // module imports its stylesheets at load time). Desktop themes still target the
@@ -1441,6 +1448,89 @@ const handleEditParagraph = (type: unknown) => {
   }
 }
 
+// ---------------------------------------------------------------------------
+// AI assistant
+//
+// The engine has no "replace the current selection" primitive, so both halves
+// of the flow go through document markdown: the selection is captured as a
+// `[start, end)` range over `getMarkdown()`, and an accepted rewrite is spliced
+// back in via `replaceContent` (which records an undo boundary, unlike
+// `setContent`, so Ctrl+Z restores the original text).
+
+/** Reads the current selection as a range over the document markdown. */
+const captureAiSelection = (): { selection: string; range: DocumentRange } | null => {
+  if (!editor.value) return null
+  const markdown = editor.value.getMarkdown()
+  const cursor = editor.value.getCursorOffset()
+  if (!cursor) return null
+
+  const range = toDocumentRange(markdown, cursor.anchor, cursor.focus)
+  if (!range || !isNonEmptyRange(markdown, range)) return null
+
+  return { selection: markdown.slice(range.start, range.end), range }
+}
+
+const handleAiRunPrompt = (promptId: unknown) => {
+  if (sourceCode.value) {
+    notice.notify({
+      title: 'AI assistant',
+      message: 'AI actions are not available in source-code mode.',
+      type: 'warning',
+      time: 4000
+    })
+    return
+  }
+
+  const captured = captureAiSelection()
+  if (!captured) {
+    notice.notify({
+      title: 'AI assistant',
+      message: 'Select some text first, then run an AI action on it.',
+      type: 'warning',
+      time: 4000
+    })
+    return
+  }
+
+  bus.emit('ai::open-dialog', {
+    promptId: typeof promptId === 'string' ? promptId : '',
+    selection: captured.selection,
+    range: captured.range
+  })
+}
+
+const handleAiApplyResult = (payload: unknown) => {
+  if (!editor.value) return
+  const { range, original, replacement } = payload as {
+    range: DocumentRange
+    original: string
+    replacement: string
+  }
+
+  const markdown = editor.value.getMarkdown()
+  const updated = replaceRange(markdown, range, replacement, original)
+
+  if (updated === null) {
+    // The document moved under us while the request was in flight. Splicing at
+    // a stale offset would corrupt unrelated text, so refuse and say why.
+    notice.notify({
+      title: 'AI assistant',
+      message: 'The document changed while the rewrite was running, so it was not applied.',
+      type: 'warning',
+      time: 6000
+    })
+    return
+  }
+
+  editor.value.replaceContent(updated)
+  // Leave the rewritten span selected so the change is visible and immediately
+  // re-editable — the same place the user's attention already was.
+  editor.value.setCursorByOffset({
+    anchor: offsetToLineCh(updated, range.start),
+    focus: offsetToLineCh(updated, range.start + replacement.length)
+  })
+}
+
 // handle `duplicate`, `delete`, `create paragraph below`
 const handleParagraph = (type: unknown) => {
   if (sourceCode.value) {
@@ -1864,6 +1954,8 @@ onMounted(() => {
   bus.on('insert-image', insertImage)
   bus.on('image-uploaded', handleUploadedImage)
   bus.on('file-changed', handleFileChange)
+  bus.on('ai::run-prompt', handleAiRunPrompt)
+  bus.on('ai::apply-result', handleAiApplyResult)
   bus.on('flush-active-editor', flushActiveEditor)
   bus.on('editor-blur', blurEditor)
   bus.on('editor-focus', focusEditor)
@@ -2017,6 +2109,8 @@ onBeforeUnmount(() => {
   bus.off('insert-image', insertImage)
   bus.off('image-uploaded', handleUploadedImage)
   bus.off('file-changed', handleFileChange)
+  bus.off('ai::run-prompt', handleAiRunPrompt)
+  bus.off('ai::apply-result', handleAiApplyResult)
   bus.off('flush-active-editor', flushActiveEditor)
   bus.off('editor-blur', blurEditor)
   bus.off('editor-focus', focusEditor)

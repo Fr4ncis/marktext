@@ -1,0 +1,150 @@
+import { ipcMain } from 'electron'
+import log from 'electron-log'
+import type {
+  AICompletionRequest,
+  AICompletionResult,
+  AIConnectionTestResult,
+  AICredentialStatus,
+  AIProviderId,
+  AIProviderSettings
+} from '../../shared/types/ai'
+import { DEFAULT_BASE_URLS } from '../../shared/types/ai'
+import { aiError } from './errors'
+import {
+  EncryptionUnavailableError,
+  getApiKey,
+  getCredentialStatus,
+  isEncryptionAvailable,
+  requiresApiKey,
+  setApiKey
+} from './keyStore'
+import { completeWithAnthropic } from './providers/anthropic'
+import { completeWithOpenAICompatible } from './providers/openaiCompatible'
+
+// All provider traffic terminates here. The renderer is sandboxed and cannot
+// open sockets, so it hands over settings plus a request id and gets back a
+// normalized result — API keys never cross the bridge in either direction.
+
+/**
+ * In-flight requests, so `mt::ai::cancel` can abort one the user dismissed.
+ * Keyed by the renderer-supplied request id.
+ */
+const inFlight = new Map<string, AbortController>()
+
+/** Falls back to the provider default when the user left the field blank. */
+const resolveBaseUrl = (settings: AIProviderSettings): string =>
+  settings.baseUrl.trim() || DEFAULT_BASE_URLS[settings.provider]
+
+const runCompletion = async(
+  settings: AIProviderSettings,
+  request: AICompletionRequest,
+  signal: AbortSignal
+): Promise<AICompletionResult> => {
+  const apiKey = await getApiKey(settings.provider)
+
+  if (!apiKey && requiresApiKey(settings.provider)) {
+    return {
+      ok: false,
+      error: aiError(
+        'missing-credentials',
+        `No API key is saved for ${settings.provider}. Add one in Preferences → AI.`
+      )
+    }
+  }
+
+  const resolved: AIProviderSettings = { ...settings, baseUrl: resolveBaseUrl(settings) }
+
+  if (resolved.provider === 'anthropic') {
+    // Guarded by the `requiresApiKey` check above — anthropic always needs one.
+    return completeWithAnthropic(resolved, request, apiKey as string, signal)
+  }
+  return completeWithOpenAICompatible(resolved, request, apiKey, signal)
+}
+
+/**
+ * Runs a completion under a timeout, tracking the controller so the renderer
+ * can cancel it. Always clears both the timer and the registry entry, so a
+ * dismissed dialog cannot leak either.
+ */
+const completeWithTimeout = async(
+  requestId: string,
+  settings: AIProviderSettings,
+  request: AICompletionRequest
+): Promise<AICompletionResult> => {
+  const controller = new AbortController()
+  inFlight.set(requestId, controller)
+  const timer = setTimeout(() => controller.abort(), settings.timeoutMs)
+
+  try {
+    return await runCompletion(settings, request, controller.signal)
+  } finally {
+    clearTimeout(timer)
+    inFlight.delete(requestId)
+  }
+}
+
+export const registerAiHandlers = (): void => {
+  ipcMain.handle(
+    'mt::ai::complete',
+    async(
+      _event,
+      requestId: string,
+      settings: AIProviderSettings,
+      request: AICompletionRequest
+    ): Promise<AICompletionResult> => {
+      try {
+        return await completeWithTimeout(requestId, settings, request)
+      } catch (error) {
+        // Providers already normalize their own failures; reaching here means
+        // something unexpected broke, and the renderer still needs a result
+        // object rather than a rejected invoke.
+        log.error('[ai] Completion failed unexpectedly.', error)
+        return { ok: false, error: aiError('unknown', (error as Error).message) }
+      }
+    }
+  )
+
+  ipcMain.on('mt::ai::cancel', (_event, requestId: string) => {
+    inFlight.get(requestId)?.abort()
+  })
+
+  ipcMain.handle(
+    'mt::ai::test-connection',
+    async(_event, settings: AIProviderSettings): Promise<AIConnectionTestResult> => {
+      // A real round trip is the only way to prove the key, base URL, and model
+      // name all work together; a reachability ping would pass with a bad model.
+      const result = await completeWithTimeout(`test-${Date.now()}`, settings, {
+        prompt: 'Reply with the single word: ok',
+        selection: 'ok'
+      })
+      return result.ok ? { ok: true, model: result.model } : { ok: false, error: result.error }
+    }
+  )
+
+  ipcMain.handle(
+    'mt::ai::set-key',
+    async(
+      _event,
+      provider: AIProviderId,
+      key: string
+    ): Promise<{ ok: true } | { ok: false; message: string }> => {
+      try {
+        await setApiKey(provider, key)
+        return { ok: true }
+      } catch (error) {
+        if (error instanceof EncryptionUnavailableError) {
+          return { ok: false, message: error.message }
+        }
+        log.error('[ai] Unable to save API key.', error)
+        return { ok: false, message: (error as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'mt::ai::credential-status',
+    async(): Promise<AICredentialStatus> => getCredentialStatus()
+  )
+
+  ipcMain.handle('mt::ai::encryption-available', (): boolean => isEncryptionAvailable())
+}

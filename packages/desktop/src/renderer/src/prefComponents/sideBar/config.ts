@@ -5,7 +5,8 @@ import {
   Brush as ThemeIcon,
   Picture as ImageIcon,
   Reading as SpellIcon,
-  Operation as KeyBindingIcon
+  Operation as KeyBindingIcon,
+  MagicStick as AiIcon
 } from '@element-plus/icons-vue'
 
 import preferences from '../../../../main/preferences/schema.json'
@@ -107,6 +108,12 @@ export const getCategory = (): PrefCategory[] => [
     label: 'keybindings',
     icon: KeyBindingIcon,
     path: '/preference/keybindings'
+  },
+  {
+    name: t('preferences.categories.ai'),
+    label: 'ai',
+    icon: AiIcon,
+    path: '/preference/ai'
   }
 ]
 
@@ -150,6 +157,7 @@ export const getTranslatedSearchContent: CachedTranslator = (() => {
       else if (categoryName === 'Watcher') mappedCategory = 'watcher'
       else if (categoryName === 'Spelling') mappedCategory = 'spelling'
       else if (categoryName === 'Custom CSS') mappedCategory = 'custom css'
+      else if (categoryName === 'AI') mappedCategory = 'ai'
       else {
         // Handle special category names
         mappedCategory = categoryName.toLowerCase().replace(/\s+/g, '-')
@@ -164,7 +172,8 @@ export const getTranslatedSearchContent: CachedTranslator = (() => {
         'spelling',
         'theme',
         'image',
-        'keybindings'
+        'keybindings',
+        'ai'
       ]
       if (!validRoutes.includes(routeCategory)) routeCategory = 'general'
 

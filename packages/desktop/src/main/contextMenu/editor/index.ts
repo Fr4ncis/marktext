@@ -12,8 +12,16 @@ import {
   getInsertAfter
 } from './menuItems'
 import spellcheckMenuBuilder from './spellcheck'
+import { buildAiSubmenu } from './ai'
+import type { AIPrompt } from '../../../shared/types/ai'
 import { t } from '../../i18n'
 import { isOsx } from '../../config'
+
+/** AI-related preferences the context menu needs to decide what to show. */
+export interface EditorContextMenuAiOptions {
+  enabled: boolean
+  prompts: AIPrompt[] | undefined
+}
 
 // Electron's ContextMenuParams shape we rely on. Kept narrow — the renderer
 // supplies the full surface so we only annotate the fields we use.
@@ -68,7 +76,8 @@ export const showEditorContextMenu = (
   win: BrowserWindow,
   event: ContextMenuEvent,
   params: ContextMenuParams,
-  isSpellcheckerEnabled: boolean
+  isSpellcheckerEnabled: boolean,
+  ai: EditorContextMenuAiOptions = { enabled: false, prompts: undefined }
 ): void => {
   const {
     isEditable,
@@ -107,6 +116,12 @@ export const showEditorContextMenu = (
           submenu: spellingSubmenu as Electron.MenuItemConstructorOptions[]
         })
       )
+      menu.append(new MenuItem(SEPARATOR))
+    }
+
+    const aiSubmenu = buildAiSubmenu(ai.enabled, ai.prompts, hasText)
+    if (aiSubmenu) {
+      menu.append(new MenuItem(aiSubmenu))
       menu.append(new MenuItem(SEPARATOR))
     }
 

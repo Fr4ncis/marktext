@@ -437,7 +437,8 @@
       "spelling": "Rechtschreibung",
       "theme": "Design",
       "image": "Bild",
-      "keybindings": "Tastenkürzel"
+      "keybindings": "Tastenkürzel",
+      "ai": "AI"
     },
     "general": {
       "title": "Allgemein",
