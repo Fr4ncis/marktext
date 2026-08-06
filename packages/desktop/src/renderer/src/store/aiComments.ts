@@ -2,7 +2,12 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { TrackedAiComment } from '@shared/types/aiComments'
 import { isDispatchable, parseAiComments, reconcileAiComments } from '@shared/types/aiComments'
-import { describeError, runCompletion, settingsFromPreferences } from '@/services/aiAssistant'
+import {
+  describeError,
+  resolvePersonaPath,
+  runCompletion,
+  settingsFromPreferences
+} from '@/services/aiAssistant'
 import { usePreferencesStore } from './preferences'
 import type { AIProviderId } from '@shared/types/ai'
 
@@ -83,7 +88,14 @@ export const useAiCommentsStore = defineStore('aiComments', () => {
     const settings = settingsFromPreferences(preferences)
     const targetAtDispatch = comment.target
 
-    const { result } = runCompletion(settings, comment.instruction, comment.target)
+    // A comment's instruction is free text with no prompt behind it, so it
+    // always uses the default persona.
+    const { result } = runCompletion(
+      settings,
+      comment.instruction,
+      comment.target,
+      resolvePersonaPath(preferences)
+    )
     const outcome = await result
 
     // The user may have edited the paragraph while this was in flight;

@@ -4,7 +4,6 @@ import type {
   AICompletionResult,
   AIProviderSettings
 } from '../../../shared/types/ai'
-import { REWRITE_SYSTEM_PROMPT } from '../../../shared/types/ai'
 import { aiError, classifyThrown, kindFromStatus } from '../errors'
 
 // Anthropic is the one provider that is not OpenAI-shaped, so it goes through
@@ -35,14 +34,16 @@ export const completeWithAnthropic = async(
   settings: AIProviderSettings,
   request: AICompletionRequest,
   apiKey: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  /** Persona plus contract, already assembled by the caller. */
+  systemPrompt: string
 ): Promise<AICompletionResult> => {
   const client = new Anthropic({ apiKey, maxRetries: 1 })
 
   const params: Anthropic.MessageCreateParamsNonStreaming = {
     model: settings.model,
     max_tokens: settings.maxTokens,
-    system: REWRITE_SYSTEM_PROMPT,
+    system: systemPrompt,
     messages: [
       {
         role: 'user',

@@ -29,6 +29,11 @@ export interface AIPrompt {
   builtin: boolean
   /** Hidden prompts stay in preferences but are not offered in any menu. */
   enabled: boolean
+  /**
+   * Persona to use for this prompt instead of the default. Absent means "use
+   * whatever the default persona is", which is what almost every prompt wants.
+   */
+  personaId?: string
 }
 
 /** Everything the main process needs to reach a provider, minus the API key. */
@@ -52,6 +57,25 @@ export interface AICompletionRequest {
   prompt: string
   /** The selection, passed separately so providers can frame it as user input. */
   selection: string
+  /**
+   * Markdown file holding the persona for this request. Read in main at send
+   * time, so editing the file takes effect on the next request with no reload.
+   */
+  personaPath?: string
+}
+
+/**
+ * A reusable voice or domain brief, stored as a Markdown file the user owns.
+ *
+ * The text lives on disk rather than in preferences because these are expected
+ * to be long — house style guides, domain glossaries — and preferences.json is
+ * a file users paste into bug reports.
+ */
+export interface AIPersona {
+  id: string
+  name: string
+  /** Absolute path to the .md file holding the persona text. */
+  filePath: string
 }
 
 export type AICompletionResult =
@@ -209,11 +233,15 @@ export const BUILTIN_PROMPTS: readonly AIPrompt[] = [
 ]
 
 /**
- * System prompt for every rewrite. The output replaces a document selection
- * verbatim, so the model must return only the rewritten text — a preamble like
- * "Here is the revised version:" would be pasted into the user's document.
+ * The machine contract for every rewrite, appended after any persona.
+ *
+ * The output replaces a document selection verbatim, so the model must return
+ * only the rewritten text — a preamble like "Here is the revised version:"
+ * would be pasted into the user's document. A persona can shape voice and
+ * supply domain knowledge, but it can never remove these rules, because a
+ * chatty persona would otherwise corrupt every Accept.
  */
-export const REWRITE_SYSTEM_PROMPT = [
+export const REWRITE_CONTRACT = [
   'You rewrite excerpts of a markdown document.',
   '',
   'Return only the rewritten excerpt. Do not add a preamble, explanation, or',
@@ -225,6 +253,22 @@ export const REWRITE_SYSTEM_PROMPT = [
   'If the instruction cannot be applied to the excerpt, return the excerpt',
   'unchanged rather than explaining why.'
 ].join('\n')
+
+/** Separator between the persona and the contract in the assembled prompt. */
+const PERSONA_SEPARATOR = '\n\n---\n\n'
+
+/**
+ * Builds the system prompt sent to the provider.
+ *
+ * The persona leads so it reads as the model's standing brief, and the contract
+ * always follows so the result stays safe to paste into the document. An absent
+ * or blank persona yields the contract alone, which is the pre-persona
+ * behaviour.
+ */
+export const assembleSystemPrompt = (personaText?: string | null): string => {
+  const persona = (personaText ?? '').trim()
+  return persona ? `${persona}${PERSONA_SEPARATOR}${REWRITE_CONTRACT}` : REWRITE_CONTRACT
+}
 
 /** Renders a prompt template against a selection. */
 export const renderPromptTemplate = (template: string, selection: string): string => {

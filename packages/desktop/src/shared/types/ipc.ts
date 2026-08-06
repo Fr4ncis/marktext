@@ -55,6 +55,7 @@ export interface IpcInvokeChannels {
     args: [requestId: string, settings: AIProviderSettings, request: AICompletionRequest]
     ret: AICompletionResult
   }
+  'mt::ai::choose-persona-file': { args: []; ret: string }
   'mt::ai::credential-status': { args: []; ret: AICredentialStatus }
   'mt::ai::encryption-available': { args: []; ret: boolean }
   'mt::ai::set-key': {

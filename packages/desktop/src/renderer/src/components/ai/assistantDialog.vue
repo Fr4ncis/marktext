@@ -113,6 +113,7 @@ import { usePreferencesStore } from '@/store/preferences'
 import {
   describeError,
   findPrompt,
+  resolvePersonaPath,
   runCompletion,
   settingsFromPreferences
 } from '@/services/aiAssistant'
@@ -185,7 +186,10 @@ const execute = async (template: string): Promise<void> => {
   resultModel.value = ''
 
   const settings = settingsFromPreferences(preferences)
-  const run = runCompletion(settings, template, payload.selection)
+  // A prompt may name its own persona; a custom one-off falls back to the
+  // default persona.
+  const personaPath = resolvePersonaPath(preferences, activePrompt.value?.id)
+  const run = runCompletion(settings, template, payload.selection, personaPath)
   cancelInFlight = run.cancel
 
   const outcome = await run.result

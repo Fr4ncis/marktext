@@ -191,6 +191,7 @@ declare global {
     ): Promise<{ ok: true } | { ok: false; message: string }>
     credentialStatus(): Promise<AICredentialStatus>
     isEncryptionAvailable(): Promise<boolean>
+    choosePersonaFile(): Promise<string>
   }
 
   interface ProcessShim {

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import bus from '../bus'
 import { setLanguage } from '../i18n'
-import type { AIPrompt, AIProviderId } from '@shared/types/ai'
+import type { AIPersona, AIPrompt, AIProviderId } from '@shared/types/ai'
 import { DEFAULT_MODELS } from '@shared/types/ai'
 
 // Finite-value unions where the runtime currently constrains the field.
@@ -121,6 +121,8 @@ export interface PreferencesState {
   aiMaxTokens: number
   aiTimeoutMs: number
   aiPrompts: AIPrompt[]
+  aiPersonas: AIPersona[]
+  aiDefaultPersonaId: string
 
   // ----- Edit modes (per-window, not persisted) -----
   typewriter: boolean
@@ -246,6 +248,8 @@ export const usePreferencesStore = defineStore('preferences', {
     // Left empty so `reconcilePrompts` seeds the built-ins on first read; that
     // keeps one source of truth for the shipped library.
     aiPrompts: [] as AIPrompt[],
+    aiPersonas: [] as AIPersona[],
+    aiDefaultPersonaId: '',
 
     // --------------------------------------------------------------------------
 

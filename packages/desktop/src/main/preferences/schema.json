@@ -451,6 +451,25 @@
     "maximum": 600000,
     "default": 60000
   },
+  "aiPersonas": {
+    "description": "AI--Reusable personas, each backed by a Markdown file.--internal",
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "filePath": { "type": "string" }
+      },
+      "required": ["id", "name", "filePath"]
+    },
+    "default": []
+  },
+  "aiDefaultPersonaId": {
+    "description": "AI--Persona used when a prompt does not name its own.",
+    "type": "string",
+    "default": ""
+  },
   "aiPrompts": {
     "description": "AI--The editable prompt library. Built-in entries are re-added on load if absent.--internal",
     "type": "array",

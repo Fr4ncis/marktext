@@ -34,6 +34,25 @@ export const findPrompt = (
 ): AIPrompt | undefined => reconcilePrompts(preferences.aiPrompts).find((p) => p.id === promptId)
 
 /**
+ * Persona file to send with a request.
+ *
+ * A prompt may name its own persona; otherwise the global default applies. A
+ * persona whose entry has been deleted resolves to nothing rather than to a
+ * stale path, so removing a persona cannot leave prompts pointing at a file
+ * that is no longer configured.
+ */
+export const resolvePersonaPath = (
+  preferences: PreferencesState,
+  promptId?: string
+): string | undefined => {
+  const personas = preferences.aiPersonas ?? []
+  const prompt = promptId ? findPrompt(preferences, promptId) : undefined
+  const personaId = prompt?.personaId || preferences.aiDefaultPersonaId
+  if (!personaId) return undefined
+  return personas.find((persona) => persona.id === personaId)?.filePath || undefined
+}
+
+/**
  * A cancellable rewrite. `cancel` aborts the main-process request; `result`
  * still resolves, with an `aborted` error, so callers have one cleanup path.
  */
@@ -45,12 +64,14 @@ export interface RunningCompletion {
 export const runCompletion = (
   settings: AIProviderSettings,
   template: string,
-  selection: string
+  selection: string,
+  personaPath?: string
 ): RunningCompletion => {
   const requestId = nextRequestId()
   const result = window.aiAssistant.complete(requestId, settings, {
     prompt: renderPromptTemplate(template, selection),
-    selection
+    selection,
+    personaPath
   })
   return { result, cancel: () => window.aiAssistant.cancel(requestId) }
 }

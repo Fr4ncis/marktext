@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { ElectronApplication, Page } from 'playwright'
+import * as fs from 'node:fs'
 import * as http from 'node:http'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -105,4 +106,43 @@ test('rewrites the selection through the preview dialog', async() => {
   expect(sent.messages[0].role).toBe('system')
   expect(sent.messages[1].content).toContain('formal')
   expect(sent.messages[1].content).toContain(ORIGINAL)
+})
+
+test('a configured persona is prepended to the system prompt', async() => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'marktext-persona-e2e-'))
+  const personaFile = path.join(dir, 'house.md')
+  fs.writeFileSync(personaFile, 'You are the in-house style editor. Prefer short sentences.')
+
+  try {
+    await page.evaluate((filePath) => {
+      window.electron.ipcRenderer.send('mt::set-user-preference', {
+        aiPersonas: [{ id: 'house', name: 'House style', filePath }],
+        aiDefaultPersonaId: 'house'
+      })
+    }, personaFile)
+    await page.waitForTimeout(700)
+
+    const callsBefore = received.length
+    await waitForEditor(page)
+    await sendIpcToRenderer(app, 'mt::editor-edit-action', 'selectAll')
+    await page.waitForTimeout(400)
+    await sendIpcToRenderer(app, 'mt::ai::run-prompt', 'formal')
+
+    const dialog = page.locator('.el-dialog:has-text("AI ·")')
+    await expect(dialog.locator('textarea')).toHaveValue(REWRITTEN, { timeout: 15000 })
+    expect(received.length).toBeGreaterThan(callsBefore)
+
+    const last = received[received.length - 1] as {
+      messages: Array<{ role: string; content: string }>
+    }
+    const system = last.messages[0]
+    expect(system.role).toBe('system')
+    // The persona leads, and the contract that keeps output pasteable follows.
+    expect(system.content.startsWith('You are the in-house style editor.')).toBe(true)
+    expect(system.content).toContain('Return only the rewritten excerpt')
+
+    await dialog.getByRole('button', { name: 'Discard' }).click()
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

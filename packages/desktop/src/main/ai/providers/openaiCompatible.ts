@@ -4,7 +4,6 @@ import type {
   AIProviderId,
   AIProviderSettings
 } from '../../../shared/types/ai'
-import { REWRITE_SYSTEM_PROMPT } from '../../../shared/types/ai'
 import { aiError, classifyThrown, kindFromStatus, messageFromErrorBody } from '../errors'
 
 // One adapter serves OpenAI, OpenRouter, and LM Studio: all three expose
@@ -79,12 +78,14 @@ export const completeWithOpenAICompatible = async(
   settings: AIProviderSettings,
   request: AICompletionRequest,
   apiKey: string | null,
-  signal: AbortSignal
+  signal: AbortSignal,
+  /** Persona plus contract, already assembled by the caller. */
+  systemPrompt: string
 ): Promise<AICompletionResult> => {
   // `system` is accepted by every target: OpenAI silently treats it as a
   // `developer` message on the reasoning models, so no per-provider branch.
   const messages = [
-    { role: 'system', content: REWRITE_SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     { role: 'user', content: `${request.prompt}\n\n---\n\n${request.selection}` }
   ]
 

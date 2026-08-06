@@ -21,3 +21,6 @@ playwright-report/
 .claude/
 .agents/
 .agent/
+
+# oh-my-claudecode agent state
+.omc/

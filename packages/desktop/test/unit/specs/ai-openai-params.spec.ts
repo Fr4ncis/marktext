@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AIProviderSettings } from '@shared/types/ai'
-import { DEFAULT_MODELS } from '@shared/types/ai'
+import { DEFAULT_MODELS, REWRITE_CONTRACT } from '@shared/types/ai'
 import {
   completeWithOpenAICompatible,
   isTokenLimitFieldRejection,
@@ -110,7 +110,8 @@ describe('completeWithOpenAICompatible wire format', () => {
       settingsFor(provider),
       { prompt: 'Make it formal', selection: 'hi' },
       'sk-test',
-      new AbortController().signal
+      new AbortController().signal,
+      REWRITE_CONTRACT
     )
 
   beforeEach(() => {

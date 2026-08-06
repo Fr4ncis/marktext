@@ -250,7 +250,8 @@ const aiAPI = {
     invoke('mt::ai::test-connection', settings),
   setApiKey: (provider: AIProviderId, key: string) => invoke('mt::ai::set-key', provider, key),
   credentialStatus: (): Promise<AICredentialStatus> => invoke('mt::ai::credential-status'),
-  isEncryptionAvailable: (): Promise<boolean> => invoke('mt::ai::encryption-available')
+  isEncryptionAvailable: (): Promise<boolean> => invoke('mt::ai::encryption-available'),
+  choosePersonaFile: (): Promise<string> => invoke('mt::ai::choose-persona-file')
 }
 
 // History reads and writes all live in main; the renderer supplies the text.

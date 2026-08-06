@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, dialog, ipcMain } from 'electron'
 import log from 'electron-log'
 import type {
   AICompletionRequest,
@@ -20,6 +20,7 @@ import {
 } from './keyStore'
 import { completeWithAnthropic } from './providers/anthropic'
 import { completeWithOpenAICompatible } from './providers/openaiCompatible'
+import { resolveSystemPrompt } from './persona'
 
 // All provider traffic terminates here. The renderer is sandboxed and cannot
 // open sockets, so it hands over settings plus a request id and gets back a
@@ -52,13 +53,25 @@ const runCompletion = async(
     }
   }
 
+  // The persona is read here rather than in the renderer so the file is only
+  // ever touched by the process that owns disk access, and so a broken persona
+  // fails before any request is billed.
+  const persona = await resolveSystemPrompt(request.personaPath)
+  if (!persona.ok) return { ok: false, error: persona.error }
+
   const resolved: AIProviderSettings = { ...settings, baseUrl: resolveBaseUrl(settings) }
 
   if (resolved.provider === 'anthropic') {
     // Guarded by the `requiresApiKey` check above — anthropic always needs one.
-    return completeWithAnthropic(resolved, request, apiKey as string, signal)
+    return completeWithAnthropic(
+      resolved,
+      request,
+      apiKey as string,
+      signal,
+      persona.systemPrompt
+    )
   }
-  return completeWithOpenAICompatible(resolved, request, apiKey, signal)
+  return completeWithOpenAICompatible(resolved, request, apiKey, signal, persona.systemPrompt)
 }
 
 /**
@@ -147,4 +160,15 @@ export const registerAiHandlers = (): void => {
   )
 
   ipcMain.handle('mt::ai::encryption-available', (): boolean => isEncryptionAvailable())
+
+  ipcMain.handle('mt::ai::choose-persona-file', async(event): Promise<string> => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return ''
+    const { filePaths } = await dialog.showOpenDialog(win, {
+      title: 'Choose a persona file',
+      properties: ['openFile'],
+      filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }]
+    })
+    return filePaths?.[0] ?? ''
+  })
 }
