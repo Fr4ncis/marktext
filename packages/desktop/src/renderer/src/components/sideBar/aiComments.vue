@@ -25,8 +25,8 @@
     >
       <p>No comments in this document.</p>
       <p class="hint">
-        Select some text and press <kbd>{{ shortcut }}</kbd> to comment on it,
-        or write <code>&lt;!--ai: your instruction--&gt;</code> above a paragraph.
+        Select some text and press <kbd>{{ shortcut }}</kbd> to comment on it —
+        or press it with nothing selected to comment on the whole document.
         Either way the rewrite runs in the background while you keep working.
       </p>
     </div>
@@ -53,6 +53,13 @@
         </p>
 
         <p
+          v-if="comment.scope === 'document'"
+          class="scope-hint"
+        >
+          Applies to the whole document
+        </p>
+        <p
+          v-else
           class="target"
           :title="comment.target"
         >
@@ -244,10 +251,15 @@ const dismiss = (comment: TrackedAiComment): void => {
   border-left-color: var(--sideBarTextColor, #909399);
 }
 
-.kind-hint {
+.kind-hint,
+.scope-hint {
   margin: 4px 0 0;
   font-size: 11px;
   opacity: 0.6;
+}
+
+.scope-hint {
+  font-style: italic;
 }
 
 .comment-head {

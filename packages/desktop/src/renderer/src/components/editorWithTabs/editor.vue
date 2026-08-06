@@ -143,6 +143,7 @@ import {
 import { useAiCommentsStore } from '@/store/aiComments'
 import {
   applyAiComment,
+  buildDocumentMarker,
   buildSpanMarkers,
   removeAiComment,
   resolveAiComment,
@@ -1590,10 +1591,15 @@ const editWithAiComment = (
 }
 
 /**
- * Selection captured when the composer opened. Held because opening the card
- * moves DOM focus, so the live selection is gone by the time the user submits.
+ * What the composer is about to comment on, captured when it opened. Held
+ * because opening the card moves DOM focus, so the live selection is gone by
+ * the time the user submits. A document comment has no anchor to capture.
  */
-let pendingCommentAnchor: { range: DocumentRange; text: string } | null = null
+type PendingCommentAnchor =
+  | { scope: 'span'; range: DocumentRange; text: string }
+  | { scope: 'document' }
+
+let pendingCommentAnchor: PendingCommentAnchor | null = null
 
 /** Opens the composer beside the current selection. */
 const handleAiCommentCompose = () => {
@@ -1609,17 +1615,24 @@ const handleAiCommentCompose = () => {
 
   const captured = captureAiSelection()
   const domSelection = window.getSelection()
+
+  // No selection is not an error — it means the comment addresses the document
+  // as a whole, which is the unpaired marker form.
   if (!captured || !domSelection || domSelection.rangeCount === 0) {
-    notice.notify({
-      title: 'AI comments',
-      message: 'Select the text you want to comment on first.',
-      type: 'warning',
-      time: 4000
+    pendingCommentAnchor = { scope: 'document' }
+    const editorRect = document.querySelector('.editor-component')?.getBoundingClientRect()
+    const top = editorRect ? editorRect.top + 24 : 80
+    const left = editorRect ? editorRect.left + 24 : 80
+    bus.emit('ai-comments::compose', {
+      scope: 'document',
+      selection: '',
+      rect: { top, bottom: top, left, right: left },
+      columnRight: editorRect ? editorRect.right : left
     })
     return
   }
 
-  pendingCommentAnchor = { range: captured.range, text: captured.selection }
+  pendingCommentAnchor = { scope: 'span', range: captured.range, text: captured.selection }
   const domRange = domSelection.getRangeAt(0)
   const rect = domRange.getBoundingClientRect()
 
@@ -1634,6 +1647,7 @@ const handleAiCommentCompose = () => {
   const columnRight = blockElement?.getBoundingClientRect().right ?? rect.right
 
   bus.emit('ai-comments::compose', {
+    scope: 'span',
     selection: captured.selection,
     rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
     columnRight
@@ -1648,6 +1662,17 @@ const handleAiCommentCreate = (payload: unknown) => {
 
   const { kind, instruction } = payload as { kind: AiCommentKind; instruction: string }
   const markdown = editor.value.getMarkdown()
+
+  if (anchor.scope === 'document') {
+    // Document markers go at the top, where they read as being about the file
+    // rather than about whatever happens to follow them.
+    const updated = `${buildDocumentMarker(kind, instruction)}\n\n${markdown}`
+    editor.value.replaceContent(updated)
+    const fileId = currentFile.value?.id
+    if (fileId) aiCommentsStore.SYNC(fileId, updated)
+    return
+  }
+
   const { start, end } = anchor.range
 
   // The document can move between selecting and submitting; splicing at a stale

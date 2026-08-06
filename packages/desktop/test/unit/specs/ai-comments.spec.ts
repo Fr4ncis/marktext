@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { TrackedAiComment } from '@shared/types/aiComments'
 import {
   applyAiComment,
+  buildDocumentMarker,
   buildSpanMarkers,
   hasTarget,
   isDispatchable,
@@ -376,5 +377,101 @@ describe('stripAiComments with spans', () => {
   it('removes note markers too', () => {
     const doc = 'Revenue was <!--note: check-->£4.2m<!--/note--> last year.'
     expect(stripAiComments(doc)).toBe('Revenue was £4.2m last year.')
+  })
+})
+
+// A trailing slash makes the marker a void element: it never pairs, never
+// claims a paragraph, and addresses the document as a whole.
+describe('document comments', () => {
+  const DOC = '<!--ai/: keep the tone consistent-->\n\n# Title\n\nFirst para.\n\nSecond para.'
+
+  it('parses as document scope', () => {
+    const [comment] = parseAiComments(DOC)
+    expect(comment.scope).toBe('document')
+    expect(comment.kind).toBe('ai')
+    expect(comment.instruction).toBe('keep the tone consistent')
+  })
+
+  it('targets the whole prose with markers stripped out', () => {
+    // The model should be shown the document, not the review syntax.
+    const [comment] = parseAiComments(DOC)
+    expect(comment.target).toBe('# Title\n\nFirst para.\n\nSecond para.')
+    expect(comment.target).not.toContain('<!--')
+  })
+
+  it('excludes other comments’ markers from the target', () => {
+    const doc = '<!--ai/: overall tone-->\n\nA <!--ai: soften-->word<!--/ai--> here.'
+    const [documentComment] = parseAiComments(doc)
+    expect(documentComment.target).toBe('A word here.')
+  })
+
+  it('never pairs with a closer', () => {
+    // `<!--/ai-->` closes a span; a self-closing marker must ignore it.
+    const doc = '<!--ai/: overall-->\n\nText.<!--/ai-->'
+    expect(parseAiComments(doc)[0].scope).toBe('document')
+  })
+
+  it('supports a document-wide note', () => {
+    const [comment] = parseAiComments('<!--note/: needs a legal review-->\n\nBody.')
+    expect(comment.scope).toBe('document')
+    expect(comment.kind).toBe('note')
+    expect(isDispatchable(comment)).toBe(false)
+  })
+
+  it('coexists with span and block comments', () => {
+    const doc = [
+      '<!--ai/: overall tone-->',
+      '',
+      '<!--ai: tighten-->',
+      'A paragraph.',
+      '',
+      'X <!--note: check-->this<!--/note--> Y.'
+    ].join('\n')
+    expect(parseAiComments(doc).map((c) => c.scope)).toEqual(['document', 'block', 'span'])
+  })
+
+  it('replaces the entire document on accept', () => {
+    const comment = parseAiComments(DOC)[0]
+    const rewritten = '# Title\n\nRewritten throughout.'
+    expect(applyAiComment(DOC, comment, rewritten, comment.target)).toBe(rewritten)
+  })
+
+  it('refuses an accept once the prose changed', () => {
+    const comment = parseAiComments(DOC)[0]
+    const edited = DOC.replace('First para.', 'First para, edited.')
+    // The suggestion rewrote words the user has since changed.
+    expect(applyAiComment(edited, comment, 'anything', comment.target)).toBeNull()
+  })
+
+  it('removes only its own marker on dismiss', () => {
+    const comment = parseAiComments(DOC)[0]
+    expect(removeAiComment(DOC, comment)).toBe('\n# Title\n\nFirst para.\n\nSecond para.')
+  })
+
+  it('keeps a finished suggestion while the document is edited', () => {
+    // Its target is the whole document, so invalidating on change would discard
+    // the suggestion on every keystroke and make the feature useless.
+    const first = reconcileAiComments([], parseAiComments(DOC), idGen())
+    const ready: TrackedAiComment[] = [
+      { ...first.comments[0], status: 'ready', suggestion: 'Rewritten.' }
+    ]
+
+    const edited = DOC.replace('Second para.', 'Second para, now longer.')
+    const second = reconcileAiComments(ready, parseAiComments(edited), idGen())
+
+    expect(second.comments[0].status).toBe('ready')
+    expect(second.comments[0].suggestion).toBe('Rewritten.')
+  })
+
+  it('builds a marker that round-trips through the parser', () => {
+    const marker = buildDocumentMarker('ai', '  keep the tone consistent  ')
+    expect(marker).toBe('<!--ai/: keep the tone consistent-->')
+    const [comment] = parseAiComments(`${marker}\n\nBody text.`)
+    expect(comment.scope).toBe('document')
+    expect(comment.instruction).toBe('keep the tone consistent')
+  })
+
+  it('is stripped for export like any other marker', () => {
+    expect(stripAiComments(DOC)).toBe('# Title\n\nFirst para.\n\nSecond para.')
   })
 })

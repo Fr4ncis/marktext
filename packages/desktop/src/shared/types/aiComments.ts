@@ -2,9 +2,14 @@
 //
 // Two shapes, both HTML comments so they are invisible to other renderers:
 //
-//   span   <!--ai: soften this-->maternity (12 months)<!--/ai-->
-//   block  <!--ai: tighten this-->
-//          The whole paragraph beneath the marker is the target.
+//   span      <!--ai: soften this-->maternity (12 months)<!--/ai-->
+//   block     <!--ai: tighten this-->
+//             The whole paragraph beneath the marker is the target.
+//   document  <!--ai/: keep the tone consistent throughout-->
+//
+// The trailing slash reads as a void element — it never pairs and never looks
+// for a paragraph, it applies to the document as a whole. Leading slash closes
+// a span, trailing slash stands alone.
 //
 // Storing the anchor *as document text* is the whole trick. The user keeps
 // editing while requests are in flight, and markers that live in the text move
@@ -18,21 +23,21 @@
 /** `ai` dispatches a rewrite request; `note` is a reminder that never does. */
 export type AiCommentKind = 'ai' | 'note'
 
-/** Whether the comment covers an exact selection or the paragraph below it. */
-export type AiCommentScope = 'span' | 'block'
+/** What the comment covers: an exact selection, the paragraph below it, or all of it. */
+export type AiCommentScope = 'span' | 'block' | 'document'
 
 /**
  * Opening marker. The lazy body plus the required `-->` means a half-typed
  * comment does not match — which is what makes "run as soon as it is written"
  * safe, since the closing token is the completion signal.
  */
-export const AI_COMMENT_OPEN_PATTERN = /<!--\s*(ai|note):\s*([\s\S]*?)-->/g
+export const AI_COMMENT_OPEN_PATTERN = /<!--\s*(ai|note)(\/?)\s*:\s*([\s\S]*?)-->/g
 
 /** Closing marker of a span comment. */
 export const AI_COMMENT_CLOSE_PATTERN = /<!--\s*\/(ai|note)\s*-->/g
 
 /** Every marker, used when stripping a document for export. */
-const ANY_MARKER_PATTERN = /<!--\s*(?:\/(?:ai|note)\s*|(?:ai|note):[\s\S]*?)-->/g
+const ANY_MARKER_PATTERN = /<!--\s*(?:\/(?:ai|note)\s*|(?:ai|note)\/?\s*:[\s\S]*?)-->/g
 
 export interface ParsedAiComment {
   kind: AiCommentKind
@@ -62,6 +67,8 @@ export interface TrackedAiComment extends ParsedAiComment {
 
 interface OpenMarker {
   kind: AiCommentKind
+  /** True when the marker carried a trailing slash — a document-wide comment. */
+  selfClosing: boolean
   instruction: string
   start: number
   end: number
@@ -78,12 +85,13 @@ const findOpenMarkers = (markdown: string): OpenMarker[] => {
   const found: OpenMarker[] = []
   let match: RegExpExecArray | null
   while ((match = pattern.exec(markdown)) !== null) {
-    const instruction = match[2].trim()
+    const instruction = match[3].trim()
     // `<!--ai:-->` carries no instruction; treat it as not-yet-written rather
     // than dispatching an empty prompt.
     if (instruction) {
       found.push({
         kind: match[1] as AiCommentKind,
+        selfClosing: match[2] === '/',
         instruction,
         start: match.index,
         end: match.index + match[0].length
@@ -144,6 +152,24 @@ export const parseAiComments = (markdown: string): ParsedAiComment[] => {
   const closes = findCloseMarkers(markdown)
 
   return opens.map((open, index) => {
+    // A self-closing marker never pairs and never claims a paragraph — it
+    // addresses the document, so its target is the prose with every marker
+    // stripped out (the model should not be shown the review syntax).
+    if (open.selfClosing) {
+      return {
+        kind: open.kind,
+        scope: 'document' as const,
+        instruction: open.instruction,
+        markerStart: open.start,
+        markerEnd: open.end,
+        closerStart: -1,
+        closerEnd: -1,
+        targetStart: 0,
+        targetEnd: markdown.length,
+        target: stripAiComments(markdown).trim()
+      }
+    }
+
     const nextSameKind = opens.find((o, i) => i > index && o.kind === open.kind)
     const closer = closes.find(
       (c) =>
@@ -200,6 +226,10 @@ export const buildSpanMarkers = (
   close: `<!--/${kind}-->`
 })
 
+/** Builds an unpaired, document-wide marker. */
+export const buildDocumentMarker = (kind: AiCommentKind, instruction: string): string =>
+  `<!--${kind}/: ${instruction.trim()}-->`
+
 export interface ReconcileResult {
   comments: TrackedAiComment[]
   /** Comments seen for the first time — the ones worth dispatching. */
@@ -250,7 +280,10 @@ export const reconcileAiComments = (
     }
 
     unclaimed.delete(best)
-    const targetChanged = best.target !== entry.target
+    // A document comment's target is the whole document, so any keystroke would
+    // "change" it. Discarding a finished suggestion on every character typed
+    // would make document comments useless; the accept path re-checks instead.
+    const targetChanged = entry.scope !== 'document' && best.target !== entry.target
     comments.push({
       ...entry,
       id: best.id,
@@ -314,7 +347,20 @@ export const applyAiComment = (
 ): string | null => {
   const { markerStart, markerEnd, targetStart, targetEnd, closerEnd, scope } = comment
   if (markerStart < 0 || targetEnd > markdown.length) return null
-  if (markdown.slice(targetStart, targetEnd) !== expectedTarget) return null
+
+  // The guard compares what the model was actually shown. For a document
+  // comment that is the stripped prose, so an unrelated marker added since does
+  // not read as the document having changed.
+  const current =
+    scope === 'document' ? stripAiComments(markdown).trim() : markdown.slice(targetStart, targetEnd)
+  if (current !== expectedTarget) return null
+
+  if (scope === 'document') {
+    // Accepting a document rewrite replaces everything, markers included — any
+    // other comments in the file are resolved away with it, and reconciliation
+    // drops them on the next scan.
+    return replacement
+  }
 
   if (scope === 'span') {
     if (closerEnd > markdown.length) return null
@@ -337,6 +383,12 @@ export const removeAiComment = (markdown: string, comment: ParsedAiComment): str
   const { markerStart, markerEnd, targetStart, targetEnd, closerEnd, scope } = comment
   if (markerStart < 0 || markerEnd > markdown.length) return null
 
+  if (scope === 'document') {
+    const gapEnd = skipNewlines(markdown, markerEnd, markdown.length)
+    const separator = gapEnd > markerEnd ? '\n' : ''
+    return markdown.slice(0, markerStart) + separator + markdown.slice(gapEnd)
+  }
+
   if (scope === 'span') {
     if (closerEnd > markdown.length) return null
     return (
@@ -355,6 +407,14 @@ export const removeAiComment = (markdown: string, comment: ParsedAiComment): str
 /**
  * Strips every marker from a document — used on export so review notes never
  * reach a PDF or an HTML file. Span text is preserved; only the markers go.
+ *
+ * A marker sitting alone on a line takes the whole line with it, so removing it
+ * does not leave a stray blank line in the exported prose. A marker inline in a
+ * sentence is cut out without touching the surrounding text.
  */
 export const stripAiComments = (markdown: string): string =>
-  markdown.replace(new RegExp(`${ANY_MARKER_PATTERN.source}\\n?`, 'g'), '')
+  markdown
+    .replace(new RegExp(`^[ \\t]*${ANY_MARKER_PATTERN.source}[ \\t]*\\r?\\n?`, 'gm'), '')
+    .replace(new RegExp(ANY_MARKER_PATTERN.source, 'g'), '')
+    // An export should not open on the blank line a leading marker left behind.
+    .replace(/^\n+/, '')

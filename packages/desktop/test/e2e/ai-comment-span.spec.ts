@@ -157,3 +157,38 @@ test('a note is anchored but never sent to the model', async() => {
   const markdown = await getMarkdownContent(page, app)
   expect(markdown).toContain('<!--note: confirm with HR-->all staff<!--/note-->')
 })
+
+test('commenting with nothing selected addresses the whole document', async() => {
+  const callsBefore = received.length
+
+  // Collapse the selection: no anchor means the comment is about the file.
+  await page.evaluate(() => window.getSelection()?.removeAllRanges())
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].webContents.send('mt::ai::compose-comment')
+  })
+
+  const composer = page.locator('.ai-comment-composer')
+  await expect(composer).toBeVisible({ timeout: 5000 })
+  // The card says what it will act on rather than quoting a phrase.
+  await expect(composer.locator('.whole-document')).toHaveText('Whole document')
+  await page.screenshot({ path: path.join(SHOT_DIR, 'span-05-document.png') })
+
+  await composer.locator('textarea').fill('keep the tone consistent')
+  await composer.getByRole('button', { name: 'Comment' }).click()
+
+  const card = page.locator('.side-bar-ai-comments .comment').first()
+  await expect(card.locator('.scope-hint')).toHaveText('Applies to the whole document', {
+    timeout: 10000
+  })
+
+  // The unpaired marker sits at the top of the file.
+  const markdown = await getMarkdownContent(page, app)
+  expect(markdown.startsWith('<!--ai/: keep the tone consistent-->')).toBe(true)
+
+  // It dispatched, and the model saw prose with no marker syntax in it.
+  await expect(card.locator('.suggestion')).toHaveText(REWRITTEN, { timeout: 15000 })
+  expect(received.length).toBeGreaterThan(callsBefore)
+  const sent = received[received.length - 1].messages[1].content
+  expect(sent).toContain('keep the tone consistent')
+  expect(sent).not.toContain('<!--')
+})

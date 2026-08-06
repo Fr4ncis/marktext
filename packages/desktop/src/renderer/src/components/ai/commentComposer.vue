@@ -7,7 +7,14 @@
     @keydown.esc.stop.prevent="cancel"
   >
     <header class="composer-head">
-      <span class="quoted">“{{ truncatedSelection }}”</span>
+      <span
+        v-if="scope === 'document'"
+        class="whole-document"
+      >Whole document</span>
+      <span
+        v-else
+        class="quoted"
+      >“{{ truncatedSelection }}”</span>
     </header>
 
     <el-input
@@ -54,7 +61,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { AiCommentKind } from '@shared/types/aiComments'
+import type { AiCommentKind, AiCommentScope } from '@shared/types/aiComments'
 import bus from '../../bus'
 
 // The Word-style composer: select text, get a card next to it, type an
@@ -63,6 +70,8 @@ import bus from '../../bus'
 
 /** Payload the editor sends when the user asks to comment on a selection. */
 interface ComposerRequest {
+  /** `document` when there was no selection — an unpaired, file-wide comment. */
+  scope: AiCommentScope
   selection: string
   /** Viewport rect of the selection, used to place the card beside it. */
   rect: { top: number; bottom: number; left: number; right: number }
@@ -79,14 +88,20 @@ const CARD_HEIGHT = 190
 const visible = ref(false)
 const draft = ref('')
 const kind = ref<AiCommentKind>('ai')
+const scope = ref<AiCommentScope>('span')
 const selection = ref('')
 const position = ref({ top: 0, left: 0 })
 const card = ref<HTMLDivElement | null>(null)
 const input = ref<{ focus: () => void } | null>(null)
 
-const placeholder = computed(() =>
-  kind.value === 'ai' ? 'Tell the AI what to change…' : 'Leave yourself a note…'
-)
+const placeholder = computed(() => {
+  if (scope.value === 'document') {
+    return kind.value === 'ai'
+      ? 'Tell the AI what to change across the document…'
+      : 'Leave a note about the document…'
+  }
+  return kind.value === 'ai' ? 'Tell the AI what to change…' : 'Leave yourself a note…'
+})
 
 const truncatedSelection = computed(() =>
   selection.value.length > 80 ? `${selection.value.slice(0, 80)}…` : selection.value
@@ -133,6 +148,7 @@ const reset = (): void => {
   visible.value = false
   draft.value = ''
   kind.value = 'ai'
+  scope.value = 'span'
   selection.value = ''
 }
 
@@ -152,6 +168,7 @@ const submit = (): void => {
 const open = (payload: unknown): void => {
   const request = payload as ComposerRequest
   reset()
+  scope.value = request.scope
   selection.value = request.selection
   placeCard(request.rect, request.columnRight)
   visible.value = true
@@ -194,6 +211,12 @@ onBeforeUnmount(() => {
 
 .composer-head {
   margin-bottom: 8px;
+}
+
+.whole-document {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--editorColor50);
 }
 
 .quoted {
