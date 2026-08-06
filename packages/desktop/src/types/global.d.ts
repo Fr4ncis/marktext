@@ -13,6 +13,7 @@ import type {
 import type { MenuTemplate, MenuPopupPosition } from '@shared/types/menu'
 import type { SerializedStat } from '@shared/types/files'
 import type {
+  AIPrompt,
   AICompletionRequest,
   AICompletionResult,
   AIConnectionTestResult,
@@ -192,6 +193,11 @@ declare global {
     credentialStatus(): Promise<AICredentialStatus>
     isEncryptionAvailable(): Promise<boolean>
     choosePersonaFile(): Promise<string>
+    showSourceContextMenu(
+      position: { x: number; y: number },
+      hasSelection: boolean,
+      ai: { enabled: boolean; prompts: AIPrompt[] | undefined }
+    ): void
   }
 
   interface ProcessShim {

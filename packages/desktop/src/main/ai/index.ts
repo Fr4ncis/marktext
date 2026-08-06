@@ -1,6 +1,7 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import log from 'electron-log'
 import type {
+  AIPrompt,
   AICompletionRequest,
   AICompletionResult,
   AIConnectionTestResult,
@@ -21,6 +22,7 @@ import {
 import { completeWithAnthropic } from './providers/anthropic'
 import { completeWithOpenAICompatible } from './providers/openaiCompatible'
 import { resolveSystemPrompt } from './persona'
+import { showSourceCodeContextMenu } from '../contextMenu/editor'
 
 // All provider traffic terminates here. The renderer is sandboxed and cannot
 // open sockets, so it hands over settings plus a request id and gets back a
@@ -120,6 +122,30 @@ export const registerAiHandlers = (): void => {
   ipcMain.on('mt::ai::cancel', (_event, requestId: string) => {
     inFlight.get(requestId)?.abort()
   })
+
+  ipcMain.on(
+    'mt::ai::source-context-menu',
+    (
+      event,
+      position: { x: number; y: number },
+      hasSelection: boolean,
+      // The renderer owns the prompt library (same as it owns provider
+      // settings for `mt::ai::complete`); main only builds the menu.
+      ai: { enabled: boolean; prompts: AIPrompt[] | undefined }
+    ) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return
+      // The renderer measures in CSS pixels; `popup` positions in window
+      // coordinates, so the two only agree at 100% zoom.
+      const zoom = win.webContents.getZoomFactor()
+      showSourceCodeContextMenu(
+        win,
+        { x: Math.round(position.x * zoom), y: Math.round(position.y * zoom) },
+        hasSelection,
+        ai
+      )
+    }
+  )
 
   ipcMain.handle(
     'mt::ai::test-connection',

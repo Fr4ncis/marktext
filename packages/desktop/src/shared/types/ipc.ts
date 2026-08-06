@@ -33,6 +33,7 @@ import type {
 import type { BufferedState as BufferedStateType } from './bufferedState'
 import type { MenuTemplate, MenuPopupPosition } from './menu'
 import type {
+  AIPrompt,
   AICompletionRequest,
   AICompletionResult,
   AIConnectionTestResult,
@@ -127,6 +128,15 @@ export interface IpcSendChannels {
   // Aborts an in-flight `mt::ai::complete` — the invoke still resolves, with an
   // `aborted` error, so the caller has a single place to clean up.
   'mt::ai::cancel': [requestId: string]
+  // Right-click inside source-code mode. Electron's own `context-menu` event
+  // cannot identify CodeMirror (see showSourceCodeContextMenu), so the
+  // renderer reports the click itself. Coordinates are CSS pixels relative to
+  // the viewport; main scales them by the window's zoom factor.
+  'mt::ai::source-context-menu': [
+    position: { x: number; y: number },
+    hasSelection: boolean,
+    ai: { enabled: boolean; prompts: AIPrompt[] | undefined }
+  ]
   'app-create-editor-window': [config?: unknown]
   'app-create-settings-window': []
   'app-open-directory-by-id': [windowId: number, dirPath: string]

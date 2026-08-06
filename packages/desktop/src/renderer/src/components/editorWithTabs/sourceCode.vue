@@ -15,6 +15,7 @@ import codeMirror, { setCursorAtFirstLine, setTextDirection } from '../../codeMi
 import { wordCount as getWordCount } from '@muyajs/core'
 import { adjustCursor } from '../../util'
 import bus from '../../bus'
+import { registerSourceEditor } from '@/util/sourceEditorRegistry'
 import { oneDarkThemes, railscastsThemes } from '@/config'
 
 // CodeMirror 5 ships no first-party types; the wrapper in src/renderer/src/
@@ -370,9 +371,18 @@ onMounted(() => {
   // outer mode into emphasis. See src/renderer/src/codeMirror/markdownMathMode.js.
   codeMirrorInstance.setOption('mode', 'markdown-math')
 
-  codeMirrorInstance.on('contextmenu', (_cm: CMInstance, event: Event) => {
+  // Source mode raises its own context menu rather than letting Electron's
+  // `context-menu` event do it: CodeMirror is a plain editable, so main cannot
+  // tell it apart from the find bar or the sidebar search box (see
+  // showSourceCodeContextMenu). Here the target is unambiguous.
+  codeMirrorInstance.on('contextmenu', (cm: CMInstance, event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
+    window.aiAssistant.showSourceContextMenu(
+      { x: event.clientX, y: event.clientY },
+      cm.getSelection().trim().length > 0,
+      { enabled: preferencesStore.aiEnabled, prompts: preferencesStore.aiPrompts }
+    )
   })
 
   if (isValidMuyaIndexCursor(muyaIndexCursor)) {
@@ -383,6 +393,9 @@ onMounted(() => {
   }
 
   editor.value = codeMirrorInstance
+  // Lets the (always-mounted) WYSIWYG component drive AI actions against this
+  // instance while source mode is on.
+  registerSourceEditor(codeMirrorInstance)
   tabId.value = id
 
   listenChange()
@@ -390,6 +403,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   viewDestroyed.value = true
+  registerSourceEditor(null)
   if (commitTimer.value) clearTimeout(commitTimer.value)
 
   bus.off('file-loaded', handleFileChange)

@@ -18,6 +18,7 @@ import type {
   BootInfo
 } from '@shared/types/ipc'
 import type {
+  AIPrompt,
   AICompletionRequest,
   AICompletionResult,
   AIConnectionTestResult,
@@ -251,7 +252,12 @@ const aiAPI = {
   setApiKey: (provider: AIProviderId, key: string) => invoke('mt::ai::set-key', provider, key),
   credentialStatus: (): Promise<AICredentialStatus> => invoke('mt::ai::credential-status'),
   isEncryptionAvailable: (): Promise<boolean> => invoke('mt::ai::encryption-available'),
-  choosePersonaFile: (): Promise<string> => invoke('mt::ai::choose-persona-file')
+  choosePersonaFile: (): Promise<string> => invoke('mt::ai::choose-persona-file'),
+  showSourceContextMenu: (
+    position: { x: number; y: number },
+    hasSelection: boolean,
+    ai: { enabled: boolean; prompts: AIPrompt[] | undefined }
+  ): void => ipcRenderer.send('mt::ai::source-context-menu', position, hasSelection, ai)
 }
 
 // History reads and writes all live in main; the renderer supplies the text.

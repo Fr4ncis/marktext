@@ -133,13 +133,13 @@ import { useProjectStore } from '@/store/project'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { SyntheticHistory, type IFileHistoryLike } from './syntheticHistory'
+import { isNonEmptyRange, replaceRange, type DocumentRange } from '@/util/documentRange'
 import {
-  isNonEmptyRange,
-  offsetToLineCh,
-  replaceRange,
-  toDocumentRange,
-  type DocumentRange
-} from '@/util/documentRange'
+  codeMirrorSurface,
+  muyaSurface,
+  type EditingSurface
+} from '@/util/editingSurface'
+import { getSourceEditor } from '@/util/sourceEditorRegistry'
 import { useAiCommentsStore } from '@/store/aiComments'
 import { useHistoryStore } from '@/store/history'
 import {
@@ -1473,30 +1473,33 @@ const handleEditParagraph = (type: unknown) => {
 // back in via `replaceContent` (which records an undo boundary, unlike
 // `setContent`, so Ctrl+Z restores the original text).
 
+/**
+ * The editor the user is actually looking at. Source mode overlays this
+ * component rather than replacing it, so `editor.value` still holds the
+ * pre-switch WYSIWYG document while CodeMirror owns the live text — writing to
+ * the wrong one would silently discard the user's edits.
+ */
+const activeSurface = (): EditingSurface | null => {
+  if (sourceCode.value) {
+    const cm = getSourceEditor()
+    return cm ? codeMirrorSurface(cm) : null
+  }
+  return editor.value ? muyaSurface(editor.value) : null
+}
+
 /** Reads the current selection as a range over the document markdown. */
 const captureAiSelection = (): { selection: string; range: DocumentRange } | null => {
-  if (!editor.value) return null
-  const markdown = editor.value.getMarkdown()
-  const cursor = editor.value.getCursorOffset()
-  if (!cursor) return null
+  const surface = activeSurface()
+  if (!surface) return null
+  const markdown = surface.getMarkdown()
 
-  const range = toDocumentRange(markdown, cursor.anchor, cursor.focus)
+  const range = surface.getSelectionRange()
   if (!range || !isNonEmptyRange(markdown, range)) return null
 
   return { selection: markdown.slice(range.start, range.end), range }
 }
 
 const handleAiRunPrompt = (promptId: unknown) => {
-  if (sourceCode.value) {
-    notice.notify({
-      title: 'AI assistant',
-      message: 'AI actions are not available in source-code mode.',
-      type: 'warning',
-      time: 4000
-    })
-    return
-  }
-
   const captured = captureAiSelection()
   if (!captured) {
     notice.notify({
@@ -1516,7 +1519,8 @@ const handleAiRunPrompt = (promptId: unknown) => {
 }
 
 const handleAiApplyResult = async (payload: unknown) => {
-  if (!editor.value) return
+  const surface = activeSurface()
+  if (!surface) return
   await snapshotBeforeAiEdit()
   const { range, original, replacement } = payload as {
     range: DocumentRange
@@ -1524,7 +1528,7 @@ const handleAiApplyResult = async (payload: unknown) => {
     replacement: string
   }
 
-  const markdown = editor.value.getMarkdown()
+  const markdown = surface.getMarkdown()
   const updated = replaceRange(markdown, range, replacement, original)
 
   if (updated === null) {
@@ -1539,13 +1543,10 @@ const handleAiApplyResult = async (payload: unknown) => {
     return
   }
 
-  editor.value.replaceContent(updated)
+  surface.replaceAll(updated)
   // Leave the rewritten span selected so the change is visible and immediately
   // re-editable — the same place the user's attention already was.
-  editor.value.setCursorByOffset({
-    anchor: offsetToLineCh(updated, range.start),
-    focus: offsetToLineCh(updated, range.start + replacement.length)
-  })
+  surface.select(updated, range.start, range.start + replacement.length)
 }
 
 // ---------------------------------------------------------------------------
@@ -1581,23 +1582,26 @@ const pointHistoryAtCurrentFile = (markdown: string): void => {
  * change is one click from being undone even after the undo stack has moved on.
  */
 const snapshotBeforeAiEdit = async (): Promise<void> => {
-  if (!editor.value) return
-  historyStore.currentText = editor.value.getMarkdown()
+  const surface = activeSurface()
+  if (!surface) return
+  historyStore.currentText = surface.getMarkdown()
   await historyStore.CAPTURE('pre-ai')
 }
 
 const handleHistoryRestore = (payload: unknown) => {
-  if (!editor.value) return
+  const surface = activeSurface()
+  if (!surface) return
   const { text } = payload as { text: string }
 
   // Snapshot what is on screen first, so restoring is itself reversible from
   // the timeline rather than only from the undo stack.
-  historyStore.currentText = editor.value.getMarkdown()
+  historyStore.currentText = surface.getMarkdown()
   historyStore
     .CAPTURE('manual', 'Before restore')
     .then(async () => {
-      if (!editor.value) return
-      editor.value.replaceContent(text)
+      const target = activeSurface()
+      if (!target) return
+      target.replaceAll(text)
       await historyStore.AFTER_RESTORE(text)
       notice.notify({
         title: 'History',
@@ -1633,6 +1637,21 @@ const syncAiComments = (fileId: string, markdown: string): void => {
   }, AI_COMMENT_SCAN_DELAY)
 }
 
+// In source mode CodeMirror commits its edits straight to the editor store, so
+// Muya's `json-change` — which drives the comment scan and the history
+// observer in WYSIWYG mode — never fires. Without this, a marker typed by hand
+// in source mode would not reach the review panel, and no version would be
+// recorded for as long as the user stayed there.
+watch(
+  () => (sourceCode.value ? currentFile.value?.markdown : undefined),
+  (markdown) => {
+    const id = currentFile.value?.id
+    if (!sourceCode.value || !id || typeof markdown !== 'string') return
+    syncAiComments(id, markdown)
+    observeHistory(markdown)
+  }
+)
+
 /**
  * Applies a document edit derived from a comment, re-resolving the marker
  * against live text first. Returns false when the marker can no longer be
@@ -1643,8 +1662,9 @@ const editWithAiComment = (
   comment: TrackedAiComment,
   edit: (markdown: string, resolved: TrackedAiComment) => string | null
 ): boolean => {
-  if (!editor.value) return false
-  const markdown = editor.value.getMarkdown()
+  const surface = activeSurface()
+  if (!surface) return false
+  const markdown = surface.getMarkdown()
 
   const fresh = resolveAiComment(markdown, comment)
   if (!fresh) return false
@@ -1652,7 +1672,7 @@ const editWithAiComment = (
   const updated = edit(markdown, { ...comment, ...fresh })
   if (updated === null) return false
 
-  editor.value.replaceContent(updated)
+  surface.replaceAll(updated)
   return true
 }
 
@@ -1669,54 +1689,38 @@ let pendingCommentAnchor: PendingCommentAnchor | null = null
 
 /** Opens the composer beside the current selection. */
 const handleAiCommentCompose = () => {
-  if (sourceCode.value) {
-    notice.notify({
-      title: 'AI comments',
-      message: 'Comments cannot be added in source-code mode.',
-      type: 'warning',
-      time: 4000
-    })
-    return
-  }
+  const surface = activeSurface()
+  if (!surface) return
 
   const captured = captureAiSelection()
-  const domSelection = window.getSelection()
+  // The composer must not cover the text being commented on, so it is placed
+  // from the live selection geometry — which each surface reports for itself.
+  const anchorRect = captured ? surface.selectionRect() : null
 
   // No selection is not an error — it means the comment addresses the document
   // as a whole, which is the unpaired marker form.
-  if (!captured || !domSelection || domSelection.rangeCount === 0) {
+  if (!captured || !anchorRect) {
     pendingCommentAnchor = { scope: 'document' }
-    const editorRect = document.querySelector('.editor-component')?.getBoundingClientRect()
-    const top = editorRect ? editorRect.top + 24 : 80
-    const left = editorRect ? editorRect.left + 24 : 80
+    const paneSelector = sourceCode.value ? '.source-code' : '.editor-component'
+    const paneRect = document.querySelector(paneSelector)?.getBoundingClientRect()
+    const top = paneRect ? paneRect.top + 24 : 80
+    const left = paneRect ? paneRect.left + 24 : 80
     bus.emit('ai-comments::compose', {
       scope: 'document',
       selection: '',
       rect: { top, bottom: top, left, right: left },
-      columnRight: editorRect ? editorRect.right : left
+      columnRight: paneRect ? paneRect.right : left
     })
     return
   }
 
   pendingCommentAnchor = { scope: 'span', range: captured.range, text: captured.selection }
-  const domRange = domSelection.getRangeAt(0)
-  const rect = domRange.getBoundingClientRect()
-
-  // The composer must not cover the sentence being commented on. `.editor-
-  // component` fills the pane, so its right edge is useless for that; the
-  // paragraph element gives the real text-column edge to place beside.
-  const startNode = domRange.startContainer
-  const blockElement =
-    startNode.nodeType === Node.ELEMENT_NODE
-      ? (startNode as Element)
-      : startNode.parentElement
-  const columnRight = blockElement?.getBoundingClientRect().right ?? rect.right
 
   bus.emit('ai-comments::compose', {
     scope: 'span',
     selection: captured.selection,
-    rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
-    columnRight
+    rect: anchorRect.rect,
+    columnRight: anchorRect.columnRight
   })
 }
 
@@ -1724,16 +1728,17 @@ const handleAiCommentCompose = () => {
 const handleAiCommentCreate = (payload: unknown) => {
   const anchor = pendingCommentAnchor
   pendingCommentAnchor = null
-  if (!editor.value || !anchor) return
+  const surface = activeSurface()
+  if (!surface || !anchor) return
 
   const { kind, instruction } = payload as { kind: AiCommentKind; instruction: string }
-  const markdown = editor.value.getMarkdown()
+  const markdown = surface.getMarkdown()
 
   if (anchor.scope === 'document') {
     // Document markers go at the top, where they read as being about the file
     // rather than about whatever happens to follow them.
     const updated = `${buildDocumentMarker(kind, instruction)}\n\n${markdown}`
-    editor.value.replaceContent(updated)
+    surface.replaceAll(updated)
     const fileId = currentFile.value?.id
     if (fileId) aiCommentsStore.SYNC(fileId, updated)
     return
@@ -1757,13 +1762,11 @@ const handleAiCommentCreate = (payload: unknown) => {
   const updated =
     markdown.slice(0, start) + open + anchor.text + close + markdown.slice(end)
 
-  editor.value.replaceContent(updated)
+  surface.replaceAll(updated)
   // Put the caret after the closing marker so typing resumes past the comment
   // rather than inside it.
-  editor.value.setCursorByOffset({
-    anchor: offsetToLineCh(updated, start + open.length + anchor.text.length + close.length),
-    focus: offsetToLineCh(updated, start + open.length + anchor.text.length + close.length)
-  })
+  const afterClose = start + open.length + anchor.text.length + close.length
+  surface.select(updated, afterClose, afterClose)
 
   const fileId = currentFile.value?.id
   if (fileId) aiCommentsStore.SYNC(fileId, updated)
