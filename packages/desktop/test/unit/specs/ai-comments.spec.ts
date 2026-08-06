@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { TrackedAiComment } from '@shared/types/aiComments'
 import {
   applyAiComment,
+  buildSpanMarkers,
   hasTarget,
+  isDispatchable,
   parseAiComments,
   reconcileAiComments,
   removeAiComment,
@@ -261,5 +263,118 @@ describe('stripAiComments', () => {
   it('leaves an ordinary HTML comment alone', () => {
     const doc = '<!-- just a note -->\nText.'
     expect(stripAiComments(doc)).toBe(doc)
+  })
+})
+
+// A span comment wraps an exact selection, the way a Word comment anchors to
+// a start and an end. Block comments (no closer) keep working unchanged.
+describe('span comments', () => {
+  const DOC = 'Leave covers <!--ai: soften this-->maternity (12 months)<!--/ai--> for all staff.'
+
+  it('anchors to the exact wrapped selection', () => {
+    const [comment] = parseAiComments(DOC)
+    expect(comment.scope).toBe('span')
+    expect(comment.kind).toBe('ai')
+    expect(comment.instruction).toBe('soften this')
+    expect(comment.target).toBe('maternity (12 months)')
+  })
+
+  it('does not swallow the rest of the paragraph', () => {
+    // The block rule would have taken everything to the blank line; the closer
+    // is what makes mid-paragraph precision possible.
+    expect(parseAiComments(DOC)[0].target).not.toContain('for all staff')
+  })
+
+  it('falls back to the paragraph when the closer is missing', () => {
+    const doc = '<!--ai: tighten this-->\nWhole paragraph here.\n\nNext.'
+    const [comment] = parseAiComments(doc)
+    expect(comment.scope).toBe('block')
+    expect(comment.target).toBe('Whole paragraph here.')
+  })
+
+  it('pairs each closer with its own opener', () => {
+    const doc = 'A <!--ai: one-->first<!--/ai--> and B <!--ai: two-->second<!--/ai--> end.'
+    const comments = parseAiComments(doc)
+    expect(comments.map((c) => c.target)).toEqual(['first', 'second'])
+  })
+
+  it('does not pair a closer of a different kind', () => {
+    // An `ai` opener must not be closed by a `note` closer.
+    const doc = 'X <!--ai: a-->text<!--/note--> more.\n\nNext para.'
+    expect(parseAiComments(doc)[0].scope).toBe('block')
+  })
+
+  it('replaces the span and removes both markers on accept', () => {
+    const comment = parseAiComments(DOC)[0]
+    expect(applyAiComment(DOC, comment, 'parental leave', comment.target)).toBe(
+      'Leave covers parental leave for all staff.'
+    )
+  })
+
+  it('keeps the text and removes both markers on dismiss', () => {
+    const comment = parseAiComments(DOC)[0]
+    expect(removeAiComment(DOC, comment)).toBe(
+      'Leave covers maternity (12 months) for all staff.'
+    )
+  })
+
+  it('refuses an accept when the span changed underneath', () => {
+    const comment = parseAiComments(DOC)[0]
+    expect(applyAiComment(DOC, comment, 'x', 'different text')).toBeNull()
+  })
+
+  it('builds markers that round-trip through the parser', () => {
+    const { open, close } = buildSpanMarkers('ai', '  soften this  ')
+    const doc = `Leave covers ${open}maternity${close} for staff.`
+    const [comment] = parseAiComments(doc)
+    expect(comment.instruction).toBe('soften this')
+    expect(comment.target).toBe('maternity')
+  })
+})
+
+describe('note comments', () => {
+  const DOC = 'Revenue was <!--note: check this figure-->£4.2m<!--/note--> last year.'
+
+  it('parses as a note, not an AI request', () => {
+    const [comment] = parseAiComments(DOC)
+    expect(comment.kind).toBe('note')
+    expect(comment.target).toBe('£4.2m')
+  })
+
+  it('is never dispatched to a provider', () => {
+    // A note is a reminder to yourself; sending it would spend a request and
+    // return a rewrite nobody asked for.
+    const [note] = parseAiComments(DOC)
+    expect(isDispatchable(note)).toBe(false)
+
+    const [instruction] = parseAiComments('X <!--ai: shorten-->text<!--/ai--> Y.')
+    expect(isDispatchable(instruction)).toBe(true)
+  })
+
+  it('starts in the note status rather than pending', () => {
+    const { comments } = reconcileAiComments([], parseAiComments(DOC), () => 'n1')
+    expect(comments[0].status).toBe('note')
+  })
+
+  it('does not collide with an AI comment of the same instruction', () => {
+    const doc = 'A <!--ai: check-->one<!--/ai--> B <!--note: check-->two<!--/note--> C.'
+    const { comments } = reconcileAiComments([], parseAiComments(doc), (() => {
+      let n = 0
+      return () => `c${++n}`
+    })())
+    expect(comments.map((c) => c.kind)).toEqual(['ai', 'note'])
+    expect(comments.map((c) => c.target)).toEqual(['one', 'two'])
+  })
+})
+
+describe('stripAiComments with spans', () => {
+  it('removes both markers but keeps the wrapped text', () => {
+    const doc = 'Leave covers <!--ai: soften-->maternity<!--/ai--> for staff.'
+    expect(stripAiComments(doc)).toBe('Leave covers maternity for staff.')
+  })
+
+  it('removes note markers too', () => {
+    const doc = 'Revenue was <!--note: check-->£4.2m<!--/note--> last year.'
+    expect(stripAiComments(doc)).toBe('Revenue was £4.2m last year.')
   })
 })

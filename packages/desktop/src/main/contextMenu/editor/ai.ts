@@ -38,6 +38,18 @@ export const buildAiSubmenu = (
   )
   submenu.push({ type: 'separator' })
   submenu.push(runPromptItem('Custom prompt…', CUSTOM_PROMPT_ID))
+  submenu.push({ type: 'separator' })
+  // Unlike the prompts above, this does not rewrite anything now — it anchors a
+  // comment to the selection and resolves in the background.
+  submenu.push({
+    label: 'Add comment…',
+    accelerator: 'CmdOrCtrl+Alt+M',
+    click(_menuItem, targetWindow) {
+      if (targetWindow) {
+        ;(targetWindow as BrowserWindow).webContents.send('mt::ai::compose-comment')
+      }
+    }
+  })
 
   return {
     label: 'AI',

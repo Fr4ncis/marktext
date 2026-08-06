@@ -143,9 +143,11 @@ import {
 import { useAiCommentsStore } from '@/store/aiComments'
 import {
   applyAiComment,
+  buildSpanMarkers,
   removeAiComment,
   resolveAiComment,
   stripAiComments,
+  type AiCommentKind,
   type TrackedAiComment
 } from '@shared/types/aiComments'
 
@@ -1587,6 +1589,95 @@ const editWithAiComment = (
   return true
 }
 
+/**
+ * Selection captured when the composer opened. Held because opening the card
+ * moves DOM focus, so the live selection is gone by the time the user submits.
+ */
+let pendingCommentAnchor: { range: DocumentRange; text: string } | null = null
+
+/** Opens the composer beside the current selection. */
+const handleAiCommentCompose = () => {
+  if (sourceCode.value) {
+    notice.notify({
+      title: 'AI comments',
+      message: 'Comments cannot be added in source-code mode.',
+      type: 'warning',
+      time: 4000
+    })
+    return
+  }
+
+  const captured = captureAiSelection()
+  const domSelection = window.getSelection()
+  if (!captured || !domSelection || domSelection.rangeCount === 0) {
+    notice.notify({
+      title: 'AI comments',
+      message: 'Select the text you want to comment on first.',
+      type: 'warning',
+      time: 4000
+    })
+    return
+  }
+
+  pendingCommentAnchor = { range: captured.range, text: captured.selection }
+  const domRange = domSelection.getRangeAt(0)
+  const rect = domRange.getBoundingClientRect()
+
+  // The composer must not cover the sentence being commented on. `.editor-
+  // component` fills the pane, so its right edge is useless for that; the
+  // paragraph element gives the real text-column edge to place beside.
+  const startNode = domRange.startContainer
+  const blockElement =
+    startNode.nodeType === Node.ELEMENT_NODE
+      ? (startNode as Element)
+      : startNode.parentElement
+  const columnRight = blockElement?.getBoundingClientRect().right ?? rect.right
+
+  bus.emit('ai-comments::compose', {
+    selection: captured.selection,
+    rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
+    columnRight
+  })
+}
+
+/** Wraps the captured selection in markers, creating the comment. */
+const handleAiCommentCreate = (payload: unknown) => {
+  const anchor = pendingCommentAnchor
+  pendingCommentAnchor = null
+  if (!editor.value || !anchor) return
+
+  const { kind, instruction } = payload as { kind: AiCommentKind; instruction: string }
+  const markdown = editor.value.getMarkdown()
+  const { start, end } = anchor.range
+
+  // The document can move between selecting and submitting; splicing at a stale
+  // offset would wrap unrelated words.
+  if (markdown.slice(start, end) !== anchor.text) {
+    notice.notify({
+      title: 'AI comments',
+      message: 'The selection changed before the comment was added, so nothing was inserted.',
+      type: 'warning',
+      time: 6000
+    })
+    return
+  }
+
+  const { open, close } = buildSpanMarkers(kind, instruction)
+  const updated =
+    markdown.slice(0, start) + open + anchor.text + close + markdown.slice(end)
+
+  editor.value.replaceContent(updated)
+  // Put the caret after the closing marker so typing resumes past the comment
+  // rather than inside it.
+  editor.value.setCursorByOffset({
+    anchor: offsetToLineCh(updated, start + open.length + anchor.text.length + close.length),
+    focus: offsetToLineCh(updated, start + open.length + anchor.text.length + close.length)
+  })
+
+  const fileId = currentFile.value?.id
+  if (fileId) aiCommentsStore.SYNC(fileId, updated)
+}
+
 const handleAiCommentAccept = (payload: unknown) => {
   const comment = payload as TrackedAiComment
   if (!comment.suggestion) return
@@ -2054,6 +2145,8 @@ onMounted(() => {
   bus.on('ai::apply-result', handleAiApplyResult)
   bus.on('ai-comments::accept', handleAiCommentAccept)
   bus.on('ai-comments::dismiss', handleAiCommentDismiss)
+  bus.on('ai-comments::compose-request', handleAiCommentCompose)
+  bus.on('ai-comments::create', handleAiCommentCreate)
   bus.on('flush-active-editor', flushActiveEditor)
   bus.on('editor-blur', blurEditor)
   bus.on('editor-focus', focusEditor)
@@ -2212,6 +2305,8 @@ onBeforeUnmount(() => {
   bus.off('ai::apply-result', handleAiApplyResult)
   bus.off('ai-comments::accept', handleAiCommentAccept)
   bus.off('ai-comments::dismiss', handleAiCommentDismiss)
+  bus.off('ai-comments::compose-request', handleAiCommentCompose)
+  bus.off('ai-comments::create', handleAiCommentCreate)
   if (aiCommentScanTimer) clearTimeout(aiCommentScanTimer)
   bus.off('flush-active-editor', flushActiveEditor)
   bus.off('editor-blur', blurEditor)

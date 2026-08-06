@@ -25,9 +25,9 @@
     >
       <p>No comments in this document.</p>
       <p class="hint">
-        Write <code>&lt;!--ai: your instruction--&gt;</code> on the line above a
-        paragraph and it will be rewritten in the background while you keep
-        working.
+        Select some text and press <kbd>{{ shortcut }}</kbd> to comment on it,
+        or write <code>&lt;!--ai: your instruction--&gt;</code> above a paragraph.
+        Either way the rewrite runs in the background while you keep working.
       </p>
     </div>
 
@@ -44,6 +44,13 @@
           <span class="instruction">{{ comment.instruction }}</span>
           <span class="status">{{ statusLabel(comment) }}</span>
         </div>
+
+        <p
+          v-if="comment.kind === 'note'"
+          class="kind-hint"
+        >
+          Note — not sent to the model.
+        </p>
 
         <p
           class="target"
@@ -83,7 +90,7 @@
             </el-button>
           </template>
           <el-button
-            v-else-if="comment.status !== 'running'"
+            v-else-if="comment.kind === 'ai' && comment.status !== 'running'"
             size="small"
             :disabled="!comment.target"
             @click="run(comment)"
@@ -121,9 +128,15 @@ const aiCommentsStore = useAiCommentsStore()
 const { comments } = storeToRefs(aiCommentsStore)
 const { aiEnabled } = storeToRefs(usePreferencesStore())
 
+/** Notes never run, so they are not counted as work waiting to be done. */
 const runnableCount = computed(
-  () => comments.value.filter((c) => c.status === 'pending' && c.target.trim()).length
+  () =>
+    comments.value.filter(
+      (c) => c.kind === 'ai' && c.status === 'pending' && c.target.trim()
+    ).length
 )
+
+const shortcut = navigator.platform.includes('Mac') ? '\u2318\u2325M' : 'Ctrl+Alt+M'
 const hasRunnable = computed(() => runnableCount.value > 0)
 
 const statusLabel = (comment: TrackedAiComment): string => {
@@ -136,6 +149,8 @@ const statusLabel = (comment: TrackedAiComment): string => {
       return 'Failed'
     case 'rejected':
       return 'Rejected'
+    case 'note':
+      return 'Note'
     default:
       return comment.target.trim() ? 'Pending' : 'No target'
   }
@@ -223,6 +238,16 @@ const dismiss = (comment: TrackedAiComment): void => {
 
 .comment.is-rejected {
   opacity: 0.55;
+}
+
+.comment.is-note {
+  border-left-color: var(--sideBarTextColor, #909399);
+}
+
+.kind-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  opacity: 0.6;
 }
 
 .comment-head {

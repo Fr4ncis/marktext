@@ -241,6 +241,9 @@ export interface IpcMainEventChannels {
   // Editor context menu picked an AI prompt. The renderer owns the selection,
   // so only the prompt id travels; an empty id opens the custom-prompt dialog.
   'mt::ai::run-prompt': [promptId: string]
+  // Open the comment composer beside the current selection. Carries nothing:
+  // the renderer already holds the selection it applies to.
+  'mt::ai::compose-comment': []
   'language-changed': [language: string]
   'mt::UPDATE_AVAILABLE': [info?: unknown]
   'mt::UPDATE_DOWNLOADED': [info?: unknown]

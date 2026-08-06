@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { TrackedAiComment } from '@shared/types/aiComments'
-import { hasTarget, parseAiComments, reconcileAiComments } from '@shared/types/aiComments'
+import { isDispatchable, parseAiComments, reconcileAiComments } from '@shared/types/aiComments'
 import { describeError, runCompletion, settingsFromPreferences } from '@/services/aiAssistant'
 import { usePreferencesStore } from './preferences'
 import type { AIProviderId } from '@shared/types/ai'
@@ -136,9 +136,10 @@ export const useAiCommentsStore = defineStore('aiComments', () => {
     if (!preferences.aiEnabled) return
 
     for (const comment of added) {
-      // A marker with nothing beneath it has no text to rewrite; it shows in
-      // the panel as needing a paragraph rather than burning a request.
-      if (hasTarget(comment)) enqueue(fileId, comment.id)
+      // Notes are reminders to the author and never dispatch; a marker with no
+      // text under it shows in the panel as needing a target rather than
+      // burning a request.
+      if (isDispatchable(comment)) enqueue(fileId, comment.id)
     }
   }
 
@@ -146,7 +147,7 @@ export const useAiCommentsStore = defineStore('aiComments', () => {
   const RUN = (commentId: string): void => {
     const fileId = activeFileId.value
     const comment = find(fileId, commentId)
-    if (!comment || !hasTarget(comment)) return
+    if (!comment || !isDispatchable(comment)) return
     if (comment.status === 'running') return
     patch(fileId, commentId, { status: 'pending', error: undefined, suggestion: undefined })
     enqueue(fileId, commentId)
@@ -154,7 +155,7 @@ export const useAiCommentsStore = defineStore('aiComments', () => {
 
   const RUN_ALL = (): void => {
     for (const comment of comments.value) {
-      if (comment.status === 'pending' && hasTarget(comment)) {
+      if (comment.status === 'pending' && isDispatchable(comment)) {
         enqueue(activeFileId.value, comment.id)
       }
     }

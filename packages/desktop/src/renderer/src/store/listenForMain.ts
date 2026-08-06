@@ -31,6 +31,9 @@ export const useListenForMainStore = defineStore('listenForMain', () => {
     window.electron.ipcRenderer.on('mt::ai::run-prompt', (_e, promptId) => {
       bus.emit('ai::run-prompt', promptId)
     })
+    window.electron.ipcRenderer.on('mt::ai::compose-comment', () => {
+      bus.emit('ai-comments::compose-request')
+    })
   }
 
   function LISTEN_FOR_SHOW_DIALOG(): void {

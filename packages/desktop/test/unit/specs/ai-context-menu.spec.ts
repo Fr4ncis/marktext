@@ -15,9 +15,13 @@ describe('buildAiSubmenu', () => {
     expect(buildAiSubmenu(false, undefined, true)).toBeNull()
   })
 
-  it('lists the built-in prompts plus a custom entry when enabled', () => {
+  it('lists the built-in prompts, a custom entry, and the comment action', () => {
     const labels = submenuLabels(buildAiSubmenu(true, undefined, true))
-    expect(labels).toEqual([...BUILTIN_PROMPTS.map((p) => p.label), 'Custom prompt…'])
+    expect(labels).toEqual([
+      ...BUILTIN_PROMPTS.map((p) => p.label),
+      'Custom prompt…',
+      'Add comment…'
+    ])
   })
 
   it('omits prompts the user disabled', () => {
@@ -27,7 +31,8 @@ describe('buildAiSubmenu', () => {
     }))
     expect(submenuLabels(buildAiSubmenu(true, stored, true))).toEqual([
       'Make concise',
-      'Custom prompt…'
+      'Custom prompt…',
+      'Add comment…'
     ])
   })
 
@@ -46,8 +51,9 @@ describe('buildAiSubmenu', () => {
   it('gives the custom entry an empty prompt id', () => {
     const entries = (buildAiSubmenu(true, undefined, true)
       ?.submenu ?? []) as MenuItemConstructorOptions[]
-    const custom = entries[entries.length - 1]
-    expect(custom.label).toBe('Custom prompt…')
+    const custom = entries.find((entry) => entry.label === 'Custom prompt…')
+    expect(custom).toBeDefined()
+    if (!custom) return
 
     // The click handler is the only place the id travels, so assert it by
     // capturing what gets sent to the renderer.
@@ -75,5 +81,27 @@ describe('buildAiSubmenu', () => {
 
     entries[0].click?.({} as never, fakeWindow as never, {} as never)
     expect(sent).toEqual([['mt::ai::run-prompt', BUILTIN_PROMPTS[0].id]])
+  })
+})
+
+describe('the Add comment action', () => {
+  const entriesOf = (): MenuItemConstructorOptions[] =>
+    (buildAiSubmenu(true, undefined, true)?.submenu ?? []) as MenuItemConstructorOptions[]
+
+  it('sends the compose event rather than running a prompt', () => {
+    // Unlike the prompts above it, this rewrites nothing now — it opens the
+    // composer so the user can anchor a comment to their selection.
+    const sent: unknown[] = []
+    const fakeWindow = { webContents: { send: (...args: unknown[]) => sent.push(args) } }
+    const item = entriesOf().find((entry) => entry.label === 'Add comment…')
+
+    expect(item).toBeDefined()
+    item?.click?.({} as never, fakeWindow as never, {} as never)
+    expect(sent).toEqual([['mt::ai::compose-comment']])
+  })
+
+  it('carries the Word-style accelerator', () => {
+    const item = entriesOf().find((entry) => entry.label === 'Add comment…')
+    expect(item?.accelerator).toBe('CmdOrCtrl+Alt+M')
   })
 })
