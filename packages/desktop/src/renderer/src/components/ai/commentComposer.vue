@@ -179,6 +179,11 @@ onBeforeUnmount(() => {
 .ai-comment-composer {
   position: fixed;
   z-index: 2000;
+  /* border-box so the rendered width really is CARD_WIDTH — the placement
+     clamp measures against that constant, and content-box sizing would add
+     padding and border on top, pushing the card past the viewport edge and
+     clipping the Comment button. */
+  box-sizing: border-box;
   width: 320px;
   padding: 12px;
   background: var(--floatBgColor);
