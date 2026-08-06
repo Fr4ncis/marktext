@@ -25,6 +25,7 @@ import type {
   AIProviderId,
   AIProviderSettings
 } from '@shared/types/ai'
+import type { SnapshotTrigger } from '@shared/types/history'
 
 type RendererEventListener<K extends keyof IpcMainEventChannels> = (
   event: IpcRendererEvent,
@@ -252,6 +253,18 @@ const aiAPI = {
   isEncryptionAvailable: (): Promise<boolean> => invoke('mt::ai::encryption-available')
 }
 
+// History reads and writes all live in main; the renderer supplies the text.
+const historyAPI = {
+  list: (filePath: string) => invoke('mt::history::list', filePath),
+  capture: (filePath: string, content: string, trigger: SnapshotTrigger, label?: string) =>
+    invoke('mt::history::capture', filePath, content, trigger, label),
+  read: (filePath: string, seq: number) => invoke('mt::history::read', filePath, seq),
+  label: (filePath: string, seq: number, label: string) =>
+    invoke('mt::history::label', filePath, seq, label),
+  remove: (filePath: string, seq: number) => invoke('mt::history::delete', filePath, seq),
+  clear: (filePath: string) => invoke('mt::history::clear', filePath)
+}
+
 const electronAPI = {
   ipcRenderer: ipcWrapper,
   shell: shellAPI,
@@ -321,6 +334,7 @@ try {
   contextBridge.exposeInMainWorld('uploader', uploaderAPI)
   contextBridge.exposeInMainWorld('fonts', fontsAPI)
   contextBridge.exposeInMainWorld('aiAssistant', aiAPI)
+  contextBridge.exposeInMainWorld('fileHistory', historyAPI)
 } catch (error) {
   console.error(error)
 }

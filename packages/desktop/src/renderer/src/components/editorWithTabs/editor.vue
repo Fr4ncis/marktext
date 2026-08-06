@@ -141,6 +141,7 @@ import {
   type DocumentRange
 } from '@/util/documentRange'
 import { useAiCommentsStore } from '@/store/aiComments'
+import { useHistoryStore } from '@/store/history'
 import {
   applyAiComment,
   buildDocumentMarker,
@@ -223,6 +224,7 @@ const props = defineProps<{
 const preferencesStore = usePreferencesStore()
 const editorStore = useEditorStore()
 const aiCommentsStore = useAiCommentsStore()
+const historyStore = useHistoryStore()
 const projectStore = useProjectStore()
 
 // Use storeToRefs to extract reactive properties from the stores
@@ -1513,8 +1515,9 @@ const handleAiRunPrompt = (promptId: unknown) => {
   })
 }
 
-const handleAiApplyResult = (payload: unknown) => {
+const handleAiApplyResult = async (payload: unknown) => {
   if (!editor.value) return
+  await snapshotBeforeAiEdit()
   const { range, original, replacement } = payload as {
     range: DocumentRange
     original: string
@@ -1546,6 +1549,67 @@ const handleAiApplyResult = (payload: unknown) => {
 }
 
 // ---------------------------------------------------------------------------
+// Version history
+//
+// The store decides *whether* a change deserves a snapshot; the editor's job is
+// to tell it the current text, to fire the explicit triggers (save, and before
+// an AI edit), and to perform a restore.
+
+/**
+ * History is a safety net: a failure here is worth a log line, never an
+ * interruption to what the user is doing.
+ */
+const reportHistoryFailure = (error: unknown): void => {
+  console.error('[history]', error)
+}
+
+/** Sends the current document to the history store's change detector. */
+const observeHistory = (markdown: string): void => {
+  historyStore.OBSERVE(markdown).catch(reportHistoryFailure)
+}
+
+const pointHistoryAtCurrentFile = (markdown: string): void => {
+  // An unsaved buffer has no path to key history against; it is covered by the
+  // editor-buffer store until the first save gives it one.
+  historyStore
+    .SET_FILE(currentFile.value?.pathname ?? '', markdown)
+    .catch(reportHistoryFailure)
+}
+
+/**
+ * Snapshots before a destructive, non-deterministic edit so any AI-applied
+ * change is one click from being undone even after the undo stack has moved on.
+ */
+const snapshotBeforeAiEdit = async (): Promise<void> => {
+  if (!editor.value) return
+  historyStore.currentText = editor.value.getMarkdown()
+  await historyStore.CAPTURE('pre-ai')
+}
+
+const handleHistoryRestore = (payload: unknown) => {
+  if (!editor.value) return
+  const { text } = payload as { text: string }
+
+  // Snapshot what is on screen first, so restoring is itself reversible from
+  // the timeline rather than only from the undo stack.
+  historyStore.currentText = editor.value.getMarkdown()
+  historyStore
+    .CAPTURE('manual', 'Before restore')
+    .then(async () => {
+      if (!editor.value) return
+      editor.value.replaceContent(text)
+      await historyStore.AFTER_RESTORE(text)
+      notice.notify({
+        title: 'History',
+        message: 'Restored. The previous content was saved as a version first.',
+        type: 'primary',
+        time: 5000
+      })
+    })
+    .catch(reportHistoryFailure)
+}
+
+// ---------------------------------------------------------------------------
 // AI review comments
 //
 // Markers live in the document text, so the editor's only jobs are to hand the
@@ -1559,6 +1623,8 @@ const handleAiApplyResult = (payload: unknown) => {
  */
 const AI_COMMENT_SCAN_DELAY = 600
 let aiCommentScanTimer: ReturnType<typeof setTimeout> | null = null
+/** Disposer for the save listener, so a remounted editor does not double-fire. */
+let unlistenTabSaved: (() => void) | null = null
 
 const syncAiComments = (fileId: string, markdown: string): void => {
   if (aiCommentScanTimer) clearTimeout(aiCommentScanTimer)
@@ -1703,9 +1769,10 @@ const handleAiCommentCreate = (payload: unknown) => {
   if (fileId) aiCommentsStore.SYNC(fileId, updated)
 }
 
-const handleAiCommentAccept = (payload: unknown) => {
+const handleAiCommentAccept = async (payload: unknown) => {
   const comment = payload as TrackedAiComment
   if (!comment.suggestion) return
+  await snapshotBeforeAiEdit()
 
   const applied = editWithAiComment(comment, (markdown, resolved) =>
     applyAiComment(markdown, resolved, comment.suggestion as string, resolved.target)
@@ -1793,6 +1860,7 @@ const setMarkdownToEditor = (payload: unknown) => {
       // The store leaves a file's first scan `pending` rather than dispatching,
       // so opening a document with twenty comments costs nothing until asked.
       aiCommentsStore.SYNC(id, editor.value.getMarkdown())
+      pointHistoryAtCurrentFile(editor.value.getMarkdown())
     }
     if (newCursor) {
       applyCursor(editor.value, newCursor)
@@ -2124,6 +2192,7 @@ onMounted(() => {
   if (currentFile.value?.id) {
     aiCommentsStore.SYNC(currentFile.value.id, muya.getMarkdown())
   }
+  pointHistoryAtCurrentFile(muya.getMarkdown())
 
   // Seed the save-tracking baseline for the mount-loaded document (from the
   // engine's OWN serialization, same reason as setMarkdownToEditor). Without
@@ -2172,6 +2241,13 @@ onMounted(() => {
   bus.on('ai-comments::dismiss', handleAiCommentDismiss)
   bus.on('ai-comments::compose-request', handleAiCommentCompose)
   bus.on('ai-comments::create', handleAiCommentCreate)
+  bus.on('history::restore', handleHistoryRestore)
+  // A save is the clearest possible "this state mattered" signal.
+  unlistenTabSaved = window.electron.ipcRenderer.on('mt::tab-saved', (_event, tabId) => {
+    if (!editor.value || tabId !== currentFile.value?.id) return
+    historyStore.currentText = editor.value.getMarkdown()
+    historyStore.CAPTURE('save').catch(reportHistoryFailure)
+  })
   bus.on('flush-active-editor', flushActiveEditor)
   bus.on('editor-blur', blurEditor)
   bus.on('editor-focus', focusEditor)
@@ -2221,6 +2297,7 @@ onMounted(() => {
       blocks: editor.value.getState()
     })
     syncAiComments(id, markdown)
+    observeHistory(markdown)
   })
 
   // The engine does not emit `scroll`; listen on the scroll container directly
@@ -2332,6 +2409,8 @@ onBeforeUnmount(() => {
   bus.off('ai-comments::dismiss', handleAiCommentDismiss)
   bus.off('ai-comments::compose-request', handleAiCommentCompose)
   bus.off('ai-comments::create', handleAiCommentCreate)
+  bus.off('history::restore', handleHistoryRestore)
+  unlistenTabSaved?.()
   if (aiCommentScanTimer) clearTimeout(aiCommentScanTimer)
   bus.off('flush-active-editor', flushActiveEditor)
   bus.off('editor-blur', blurEditor)

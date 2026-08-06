@@ -252,7 +252,8 @@
       "search": "検索",
       "toc": "目次",
       "settings": "設定",
-      "aiComments": "AI comments"
+      "aiComments": "AI comments",
+      "history": "History"
     }
   },
   "commandPalette": {

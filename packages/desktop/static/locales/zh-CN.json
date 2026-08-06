@@ -252,7 +252,8 @@
       "search": "搜索",
       "toc": "目录",
       "settings": "设置",
-      "aiComments": "AI comments"
+      "aiComments": "AI comments",
+      "history": "History"
     }
   },
   "commandPalette": {

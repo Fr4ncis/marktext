@@ -40,6 +40,7 @@ import type {
   AIProviderId,
   AIProviderSettings
 } from './ai'
+import type { SnapshotMeta, SnapshotTrigger } from './history'
 
 // =================================================================
 // Invoke channels (renderer → main, returns Promise<T>)
@@ -62,6 +63,18 @@ export interface IpcInvokeChannels {
   }
   'mt::ai::test-connection': { args: [settings: AIProviderSettings]; ret: AIConnectionTestResult }
   'mt::cmd::exists': { args: [name: string]; ret: boolean }
+  'mt::history::capture': {
+    args: [filePath: string, content: string, trigger: SnapshotTrigger, label?: string]
+    ret: SnapshotMeta | null
+  }
+  'mt::history::clear': { args: [filePath: string]; ret: void }
+  'mt::history::delete': { args: [filePath: string, seq: number]; ret: SnapshotMeta[] }
+  'mt::history::label': {
+    args: [filePath: string, seq: number, label: string]
+    ret: SnapshotMeta[]
+  }
+  'mt::history::list': { args: [filePath: string]; ret: SnapshotMeta[] }
+  'mt::history::read': { args: [filePath: string, seq: number]; ret: string | null }
   'mt::fonts::list': { args: []; ret: string[] }
   'mt::fs-trash-item': { args: [pathname: string]; ret: void }
   'mt::fs::copy': { args: [src: string, dest: string]; ret: void }

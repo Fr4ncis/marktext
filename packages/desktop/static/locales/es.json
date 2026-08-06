@@ -252,7 +252,8 @@
       "search": "Buscar",
       "toc": "Tabla de Contenidos",
       "settings": "Configuración",
-      "aiComments": "AI comments"
+      "aiComments": "AI comments",
+      "history": "History"
     }
   },
   "commandPalette": {

@@ -39,6 +39,7 @@
       <side-bar-search v-else-if="rightColumn === 'search'" />
       <toc v-else-if="rightColumn === 'toc'" />
       <ai-comments v-else-if="rightColumn === 'aiComments'" />
+      <history v-else-if="rightColumn === 'history'" />
     </div>
     <div
       v-show="rightColumn"
@@ -59,6 +60,7 @@ import Tree from './tree.vue'
 import SideBarSearch from './search.vue'
 import Toc from './toc.vue'
 import AiComments from './aiComments.vue'
+import History from './history.vue'
 import { storeToRefs } from 'pinia'
 import type { TabDescriptor } from './types'
 

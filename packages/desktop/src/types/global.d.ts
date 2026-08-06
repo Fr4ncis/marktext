@@ -20,6 +20,7 @@ import type {
   AIProviderId,
   AIProviderSettings
 } from '@shared/types/ai'
+import type { SnapshotMeta, SnapshotTrigger } from '@shared/types/history'
 
 declare global {
   // ---- Build-time defines (electron-vite `define`) ----
@@ -202,6 +203,21 @@ declare global {
     nextTick: (fn: (...args: unknown[]) => void, ...args: unknown[]) => void
   }
 
+  /** Version history for the active file; all storage lives in main. */
+  interface FileHistoryAPI {
+    list(filePath: string): Promise<SnapshotMeta[]>
+    capture(
+      filePath: string,
+      content: string,
+      trigger: SnapshotTrigger,
+      label?: string
+    ): Promise<SnapshotMeta | null>
+    read(filePath: string, seq: number): Promise<string | null>
+    label(filePath: string, seq: number, label: string): Promise<SnapshotMeta[]>
+    remove(filePath: string, seq: number): Promise<SnapshotMeta[]>
+    clear(filePath: string): Promise<void>
+  }
+
   interface Window {
     electron: ElectronAPI
     fileUtils: FileUtilsAPI
@@ -212,6 +228,7 @@ declare global {
     uploader: UploaderAPI
     fonts: FontsAPI
     aiAssistant: AiAssistantAPI
+    fileHistory: FileHistoryAPI
     process: ProcessShim
     rgPath: string
     // Set by the legacy editor store at runtime; consumed by muya internals.
