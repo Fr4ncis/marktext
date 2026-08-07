@@ -24,3 +24,6 @@ playwright-report/
 
 # oh-my-claudecode agent state
 .omc/
+
+# Local profile for manual AI testing (contains a real API key)
+.dev-profile/
