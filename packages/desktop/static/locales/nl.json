@@ -251,7 +251,9 @@
       "files": "Bestanden",
       "search": "Zoeken",
       "toc": "Inhoudsopgave",
-      "settings": "Instellingen"
+      "settings": "Instellingen",
+      "aiComments": "AI comments",
+      "history": "History"
     }
   },
   "commandPalette": {
@@ -437,7 +439,8 @@
       "spelling": "Spelling",
       "theme": "Thema",
       "image": "Afbeelding",
-      "keybindings": "Sneltoetsen"
+      "keybindings": "Sneltoetsen",
+      "ai": "AI"
     },
     "general": {
       "title": "Algemeen",

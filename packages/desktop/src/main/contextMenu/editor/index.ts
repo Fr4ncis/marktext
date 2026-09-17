@@ -12,8 +12,16 @@ import {
   getInsertAfter
 } from './menuItems'
 import spellcheckMenuBuilder from './spellcheck'
+import { buildAiSubmenu } from './ai'
+import type { AIPrompt } from '../../../shared/types/ai'
 import { t } from '../../i18n'
 import { isOsx } from '../../config'
+
+/** AI-related preferences the context menu needs to decide what to show. */
+export interface EditorContextMenuAiOptions {
+  enabled: boolean
+  prompts: AIPrompt[] | undefined
+}
 
 // Electron's ContextMenuParams shape we rely on. Kept narrow — the renderer
 // supplies the full surface so we only annotate the fields we use.
@@ -64,11 +72,51 @@ const isInsideEditor = (params: ContextMenuParams): boolean => {
   return isEditable && !inputFieldType && !!editFlags.canEditRichly
 }
 
+/**
+ * Context menu for source-code mode.
+ *
+ * Source mode cannot go through the `webContents` `context-menu` event the way
+ * the WYSIWYG editor does: CodeMirror is a plain editable, so Electron reports
+ * `canEditRichly: false`, and since Electron 42 dropped `inputFieldType` there
+ * is nothing left in the params to tell CodeMirror apart from the find bar or
+ * the sidebar search box. Letting those through would point an AI rewrite at
+ * the wrong text. The renderer knows exactly what was clicked, so it asks for
+ * this menu directly instead.
+ *
+ * Only the plain clipboard verbs are offered — "insert paragraph before/after"
+ * and the rich-text copy variants are meaningless against a markdown buffer.
+ */
+export const showSourceCodeContextMenu = (
+  win: BrowserWindow,
+  position: { x: number; y: number },
+  hasSelection: boolean,
+  ai: EditorContextMenuAiOptions = { enabled: false, prompts: undefined }
+): void => {
+  const menu = new Menu()
+
+  const aiSubmenu = buildAiSubmenu(ai.enabled, ai.prompts, hasSelection)
+  if (aiSubmenu) {
+    menu.append(new MenuItem(aiSubmenu))
+    menu.append(new MenuItem(SEPARATOR))
+  }
+
+  const cut = getCUT()
+  const copy = getCOPY()
+  cut.enabled = hasSelection
+  copy.enabled = hasSelection
+  for (const item of [cut, copy, getPASTE()]) {
+    menu.append(new MenuItem(item))
+  }
+
+  menu.popup({ window: win, x: position.x, y: position.y })
+}
+
 export const showEditorContextMenu = (
   win: BrowserWindow,
   event: ContextMenuEvent,
   params: ContextMenuParams,
-  isSpellcheckerEnabled: boolean
+  isSpellcheckerEnabled: boolean,
+  ai: EditorContextMenuAiOptions = { enabled: false, prompts: undefined }
 ): void => {
   const {
     isEditable,
@@ -107,6 +155,12 @@ export const showEditorContextMenu = (
           submenu: spellingSubmenu as Electron.MenuItemConstructorOptions[]
         })
       )
+      menu.append(new MenuItem(SEPARATOR))
+    }
+
+    const aiSubmenu = buildAiSubmenu(ai.enabled, ai.prompts, hasText)
+    if (aiSubmenu) {
+      menu.append(new MenuItem(aiSubmenu))
       menu.append(new MenuItem(SEPARATOR))
     }
 

@@ -6,6 +6,8 @@
 // Kept intentionally open with `[key: string]: unknown` until the schema
 // is mechanically derived from schema.json in a follow-up.
 
+import type { AIPersona, AIPrompt, AIProviderId } from './ai'
+
 export interface IUserPreferences {
   autoSave?: boolean
   autoSaveDelay?: number
@@ -69,6 +71,15 @@ export interface IUserPreferences {
   autoNormalizeLineEndings?: boolean
   watcherUsePolling?: boolean
   treePathExcludePatterns?: string[]
+  aiEnabled?: boolean
+  aiProvider?: AIProviderId
+  aiModel?: string
+  aiBaseUrl?: string
+  aiMaxTokens?: number
+  aiTimeoutMs?: number
+  aiPrompts?: AIPrompt[]
+  aiPersonas?: AIPersona[]
+  aiDefaultPersonaId?: string
   [key: string]: unknown
 }
 

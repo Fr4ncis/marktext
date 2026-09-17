@@ -167,6 +167,7 @@ onMounted(async () => {
   preferencesStore.LISTEN_FOR_VIEW()
   listenForMainStore.LISTEN_FOR_SHOW_DIALOG()
   listenForMainStore.LISTEN_FOR_PARAGRAPH_INLINE_STYLE()
+  listenForMainStore.LISTEN_FOR_AI()
   projectStore.LISTEN_FOR_UPDATE_PROJECT()
   projectStore.LISTEN_FOR_LOAD_PROJECT()
   projectStore.LISTEN_FOR_SIDEBAR_CONTEXT_MENU()

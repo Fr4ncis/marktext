@@ -17,6 +17,16 @@ import type {
   IpcMainEventChannels,
   BootInfo
 } from '@shared/types/ipc'
+import type {
+  AIPrompt,
+  AICompletionRequest,
+  AICompletionResult,
+  AIConnectionTestResult,
+  AICredentialStatus,
+  AIProviderId,
+  AIProviderSettings
+} from '@shared/types/ai'
+import type { SnapshotTrigger } from '@shared/types/history'
 
 type RendererEventListener<K extends keyof IpcMainEventChannels> = (
   event: IpcRendererEvent,
@@ -228,6 +238,40 @@ const fontsAPI = {
   list: () => invoke('mt::fonts::list')
 }
 
+// The renderer never holds an API key: it sends one here to be encrypted, and
+// afterwards can only ask whether a key exists, never read it back.
+const aiAPI = {
+  complete: (
+    requestId: string,
+    settings: AIProviderSettings,
+    request: AICompletionRequest
+  ): Promise<AICompletionResult> => invoke('mt::ai::complete', requestId, settings, request),
+  cancel: (requestId: string): void => ipcRenderer.send('mt::ai::cancel', requestId),
+  testConnection: (settings: AIProviderSettings): Promise<AIConnectionTestResult> =>
+    invoke('mt::ai::test-connection', settings),
+  setApiKey: (provider: AIProviderId, key: string) => invoke('mt::ai::set-key', provider, key),
+  credentialStatus: (): Promise<AICredentialStatus> => invoke('mt::ai::credential-status'),
+  isEncryptionAvailable: (): Promise<boolean> => invoke('mt::ai::encryption-available'),
+  choosePersonaFile: (): Promise<string> => invoke('mt::ai::choose-persona-file'),
+  showSourceContextMenu: (
+    position: { x: number; y: number },
+    hasSelection: boolean,
+    ai: { enabled: boolean; prompts: AIPrompt[] | undefined }
+  ): void => ipcRenderer.send('mt::ai::source-context-menu', position, hasSelection, ai)
+}
+
+// History reads and writes all live in main; the renderer supplies the text.
+const historyAPI = {
+  list: (filePath: string) => invoke('mt::history::list', filePath),
+  capture: (filePath: string, content: string, trigger: SnapshotTrigger, label?: string) =>
+    invoke('mt::history::capture', filePath, content, trigger, label),
+  read: (filePath: string, seq: number) => invoke('mt::history::read', filePath, seq),
+  label: (filePath: string, seq: number, label: string) =>
+    invoke('mt::history::label', filePath, seq, label),
+  remove: (filePath: string, seq: number) => invoke('mt::history::delete', filePath, seq),
+  clear: (filePath: string) => invoke('mt::history::clear', filePath)
+}
+
 const electronAPI = {
   ipcRenderer: ipcWrapper,
   shell: shellAPI,
@@ -296,6 +340,8 @@ try {
   contextBridge.exposeInMainWorld('ripgrep', ripgrepAPI)
   contextBridge.exposeInMainWorld('uploader', uploaderAPI)
   contextBridge.exposeInMainWorld('fonts', fontsAPI)
+  contextBridge.exposeInMainWorld('aiAssistant', aiAPI)
+  contextBridge.exposeInMainWorld('fileHistory', historyAPI)
 } catch (error) {
   console.error(error)
 }

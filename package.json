@@ -17,6 +17,7 @@
     "rebuild-native": "pnpm --filter marktext rebuild-native",
     "start": "pnpm --filter marktext start",
     "dev": "pnpm --filter marktext dev",
+    "dev:ai": "tsx scripts/dev-ai.ts",
     "build": "pnpm --filter marktext build",
     "build:unpack": "pnpm --filter marktext build:unpack",
     "build:win": "pnpm --filter marktext build:win",

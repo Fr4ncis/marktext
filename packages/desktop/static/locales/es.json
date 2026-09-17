@@ -251,7 +251,9 @@
       "files": "Archivos",
       "search": "Buscar",
       "toc": "Tabla de Contenidos",
-      "settings": "Configuración"
+      "settings": "Configuración",
+      "aiComments": "AI comments",
+      "history": "History"
     }
   },
   "commandPalette": {
@@ -437,7 +439,8 @@
       "spelling": "Ortografía",
       "theme": "Tema",
       "image": "Imagen",
-      "keybindings": "Atajos de Teclado"
+      "keybindings": "Atajos de Teclado",
+      "ai": "AI"
     },
     "general": {
       "title": "General",

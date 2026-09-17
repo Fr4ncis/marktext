@@ -32,6 +32,16 @@ import type {
 } from './files'
 import type { BufferedState as BufferedStateType } from './bufferedState'
 import type { MenuTemplate, MenuPopupPosition } from './menu'
+import type {
+  AIPrompt,
+  AICompletionRequest,
+  AICompletionResult,
+  AIConnectionTestResult,
+  AICredentialStatus,
+  AIProviderId,
+  AIProviderSettings
+} from './ai'
+import type { SnapshotMeta, SnapshotTrigger } from './history'
 
 // =================================================================
 // Invoke channels (renderer → main, returns Promise<T>)
@@ -42,7 +52,31 @@ export interface IpcInvokeChannels {
   'mt::boot-info-async': { args: []; ret: BootInfo }
   'mt::clipboard::guess-file-path': { args: []; ret: string | null }
   'mt::clipboard::read-text': { args: []; ret: string }
+  'mt::ai::complete': {
+    args: [requestId: string, settings: AIProviderSettings, request: AICompletionRequest]
+    ret: AICompletionResult
+  }
+  'mt::ai::choose-persona-file': { args: []; ret: string }
+  'mt::ai::credential-status': { args: []; ret: AICredentialStatus }
+  'mt::ai::encryption-available': { args: []; ret: boolean }
+  'mt::ai::set-key': {
+    args: [provider: AIProviderId, key: string]
+    ret: { ok: true } | { ok: false; message: string }
+  }
+  'mt::ai::test-connection': { args: [settings: AIProviderSettings]; ret: AIConnectionTestResult }
   'mt::cmd::exists': { args: [name: string]; ret: boolean }
+  'mt::history::capture': {
+    args: [filePath: string, content: string, trigger: SnapshotTrigger, label?: string]
+    ret: SnapshotMeta | null
+  }
+  'mt::history::clear': { args: [filePath: string]; ret: void }
+  'mt::history::delete': { args: [filePath: string, seq: number]; ret: SnapshotMeta[] }
+  'mt::history::label': {
+    args: [filePath: string, seq: number, label: string]
+    ret: SnapshotMeta[]
+  }
+  'mt::history::list': { args: [filePath: string]; ret: SnapshotMeta[] }
+  'mt::history::read': { args: [filePath: string, seq: number]; ret: string | null }
   'mt::fonts::list': { args: []; ret: string[] }
   'mt::fs-trash-item': { args: [pathname: string]; ret: void }
   'mt::fs::copy': { args: [src: string, dest: string]; ret: void }
@@ -91,6 +125,18 @@ export interface IpcInvokeChannels {
 // =================================================================
 
 export interface IpcSendChannels {
+  // Aborts an in-flight `mt::ai::complete` — the invoke still resolves, with an
+  // `aborted` error, so the caller has a single place to clean up.
+  'mt::ai::cancel': [requestId: string]
+  // Right-click inside source-code mode. Electron's own `context-menu` event
+  // cannot identify CodeMirror (see showSourceCodeContextMenu), so the
+  // renderer reports the click itself. Coordinates are CSS pixels relative to
+  // the viewport; main scales them by the window's zoom factor.
+  'mt::ai::source-context-menu': [
+    position: { x: number; y: number },
+    hasSelection: boolean,
+    ai: { enabled: boolean; prompts: AIPrompt[] | undefined }
+  ]
   'app-create-editor-window': [config?: unknown]
   'app-create-settings-window': []
   'app-open-directory-by-id': [windowId: number, dirPath: string]
@@ -216,6 +262,12 @@ export interface IpcSyncChannels {
 // =================================================================
 
 export interface IpcMainEventChannels {
+  // Editor context menu picked an AI prompt. The renderer owns the selection,
+  // so only the prompt id travels; an empty id opens the custom-prompt dialog.
+  'mt::ai::run-prompt': [promptId: string]
+  // Open the comment composer beside the current selection. Carries nothing:
+  // the renderer already holds the selection it applies to.
+  'mt::ai::compose-comment': []
   'language-changed': [language: string]
   'mt::UPDATE_AVAILABLE': [info?: unknown]
   'mt::UPDATE_DOWNLOADED': [info?: unknown]

@@ -133,6 +133,25 @@ import { useProjectStore } from '@/store/project'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { SyntheticHistory, type IFileHistoryLike } from './syntheticHistory'
+import { isNonEmptyRange, replaceRange, type DocumentRange } from '@/util/documentRange'
+import {
+  codeMirrorSurface,
+  muyaSurface,
+  type EditingSurface
+} from '@/util/editingSurface'
+import { getSourceEditor } from '@/util/sourceEditorRegistry'
+import { useAiCommentsStore } from '@/store/aiComments'
+import { useHistoryStore } from '@/store/history'
+import {
+  applyAiComment,
+  buildDocumentMarker,
+  buildSpanMarkers,
+  removeAiComment,
+  resolveAiComment,
+  stripAiComments,
+  type AiCommentKind,
+  type TrackedAiComment
+} from '@shared/types/aiComments'
 
 // Importing the engine entrypoint auto-injects its editor CSS (the muya.ts
 // module imports its stylesheets at load time). Desktop themes still target the
@@ -204,6 +223,8 @@ const props = defineProps<{
 // Get stores
 const preferencesStore = usePreferencesStore()
 const editorStore = useEditorStore()
+const aiCommentsStore = useAiCommentsStore()
+const historyStore = useHistoryStore()
 const projectStore = useProjectStore()
 
 // Use storeToRefs to extract reactive properties from the stores
@@ -1307,7 +1328,9 @@ const handleExport = async (options: unknown) => {
 
   const extraCss = await getCssForOptions(opts as unknown as PdfCssOptions)
   const htmlToc = getHtmlToc(editor.value.getTOC(), opts as unknown as HtmlTocOptions)
-  const markdown = editor.value.getMarkdown()
+  // Review notes are working state, not content — they must not reach a PDF,
+  // a print job, or an exported HTML file.
+  const markdown = stripAiComments(editor.value.getMarkdown())
   const header = (opts.header ?? null) as HeaderFooterPart | null
   const footer = (opts.footer ?? null) as HeaderFooterPart | null
 
@@ -1441,6 +1464,346 @@ const handleEditParagraph = (type: unknown) => {
   }
 }
 
+// ---------------------------------------------------------------------------
+// AI assistant
+//
+// The engine has no "replace the current selection" primitive, so both halves
+// of the flow go through document markdown: the selection is captured as a
+// `[start, end)` range over `getMarkdown()`, and an accepted rewrite is spliced
+// back in via `replaceContent` (which records an undo boundary, unlike
+// `setContent`, so Ctrl+Z restores the original text).
+
+/**
+ * The editor the user is actually looking at. Source mode overlays this
+ * component rather than replacing it, so `editor.value` still holds the
+ * pre-switch WYSIWYG document while CodeMirror owns the live text — writing to
+ * the wrong one would silently discard the user's edits.
+ */
+const activeSurface = (): EditingSurface | null => {
+  if (sourceCode.value) {
+    const cm = getSourceEditor()
+    return cm ? codeMirrorSurface(cm) : null
+  }
+  return editor.value ? muyaSurface(editor.value) : null
+}
+
+/** Reads the current selection as a range over the document markdown. */
+const captureAiSelection = (): { selection: string; range: DocumentRange } | null => {
+  const surface = activeSurface()
+  if (!surface) return null
+  const markdown = surface.getMarkdown()
+
+  const range = surface.getSelectionRange()
+  if (!range || !isNonEmptyRange(markdown, range)) return null
+
+  return { selection: markdown.slice(range.start, range.end), range }
+}
+
+const handleAiRunPrompt = (promptId: unknown) => {
+  const captured = captureAiSelection()
+  if (!captured) {
+    notice.notify({
+      title: 'AI assistant',
+      message: 'Select some text first, then run an AI action on it.',
+      type: 'warning',
+      time: 4000
+    })
+    return
+  }
+
+  bus.emit('ai::open-dialog', {
+    promptId: typeof promptId === 'string' ? promptId : '',
+    selection: captured.selection,
+    range: captured.range
+  })
+}
+
+const handleAiApplyResult = async (payload: unknown) => {
+  const surface = activeSurface()
+  if (!surface) return
+  await snapshotBeforeAiEdit()
+  const { range, original, replacement } = payload as {
+    range: DocumentRange
+    original: string
+    replacement: string
+  }
+
+  const markdown = surface.getMarkdown()
+  const updated = replaceRange(markdown, range, replacement, original)
+
+  if (updated === null) {
+    // The document moved under us while the request was in flight. Splicing at
+    // a stale offset would corrupt unrelated text, so refuse and say why.
+    notice.notify({
+      title: 'AI assistant',
+      message: 'The document changed while the rewrite was running, so it was not applied.',
+      type: 'warning',
+      time: 6000
+    })
+    return
+  }
+
+  surface.replaceAll(updated)
+  // Leave the rewritten span selected so the change is visible and immediately
+  // re-editable — the same place the user's attention already was.
+  surface.select(updated, range.start, range.start + replacement.length)
+}
+
+// ---------------------------------------------------------------------------
+// Version history
+//
+// The store decides *whether* a change deserves a snapshot; the editor's job is
+// to tell it the current text, to fire the explicit triggers (save, and before
+// an AI edit), and to perform a restore.
+
+/**
+ * History is a safety net: a failure here is worth a log line, never an
+ * interruption to what the user is doing.
+ */
+const reportHistoryFailure = (error: unknown): void => {
+  console.error('[history]', error)
+}
+
+/** Sends the current document to the history store's change detector. */
+const observeHistory = (markdown: string): void => {
+  historyStore.OBSERVE(markdown).catch(reportHistoryFailure)
+}
+
+const pointHistoryAtCurrentFile = (markdown: string): void => {
+  // An unsaved buffer has no path to key history against; it is covered by the
+  // editor-buffer store until the first save gives it one.
+  historyStore
+    .SET_FILE(currentFile.value?.pathname ?? '', markdown)
+    .catch(reportHistoryFailure)
+}
+
+/**
+ * Snapshots before a destructive, non-deterministic edit so any AI-applied
+ * change is one click from being undone even after the undo stack has moved on.
+ */
+const snapshotBeforeAiEdit = async (): Promise<void> => {
+  const surface = activeSurface()
+  if (!surface) return
+  historyStore.currentText = surface.getMarkdown()
+  await historyStore.CAPTURE('pre-ai')
+}
+
+const handleHistoryRestore = (payload: unknown) => {
+  const surface = activeSurface()
+  if (!surface) return
+  const { text } = payload as { text: string }
+
+  // Snapshot what is on screen first, so restoring is itself reversible from
+  // the timeline rather than only from the undo stack.
+  historyStore.currentText = surface.getMarkdown()
+  historyStore
+    .CAPTURE('manual', 'Before restore')
+    .then(async () => {
+      const target = activeSurface()
+      if (!target) return
+      target.replaceAll(text)
+      await historyStore.AFTER_RESTORE(text)
+      notice.notify({
+        title: 'History',
+        message: 'Restored. The previous content was saved as a version first.',
+        type: 'primary',
+        time: 5000
+      })
+    })
+    .catch(reportHistoryFailure)
+}
+
+// ---------------------------------------------------------------------------
+// AI review comments
+//
+// Markers live in the document text, so the editor's only jobs are to hand the
+// current markdown to the queue whenever it changes, and to perform the two
+// document edits (accept / dismiss) that the review panel asks for.
+
+/**
+ * Scanning is debounced because `json-change` fires per keystroke and a scan
+ * walks the whole document. It also gives a marker a moment to settle before
+ * its request is dispatched.
+ */
+const AI_COMMENT_SCAN_DELAY = 600
+let aiCommentScanTimer: ReturnType<typeof setTimeout> | null = null
+/** Disposer for the save listener, so a remounted editor does not double-fire. */
+let unlistenTabSaved: (() => void) | null = null
+
+const syncAiComments = (fileId: string, markdown: string): void => {
+  if (aiCommentScanTimer) clearTimeout(aiCommentScanTimer)
+  aiCommentScanTimer = setTimeout(() => {
+    aiCommentsStore.SYNC(fileId, markdown)
+  }, AI_COMMENT_SCAN_DELAY)
+}
+
+// In source mode CodeMirror commits its edits straight to the editor store, so
+// Muya's `json-change` — which drives the comment scan and the history
+// observer in WYSIWYG mode — never fires. Without this, a marker typed by hand
+// in source mode would not reach the review panel, and no version would be
+// recorded for as long as the user stayed there.
+watch(
+  () => (sourceCode.value ? currentFile.value?.markdown : undefined),
+  (markdown) => {
+    const id = currentFile.value?.id
+    if (!sourceCode.value || !id || typeof markdown !== 'string') return
+    syncAiComments(id, markdown)
+    observeHistory(markdown)
+  }
+)
+
+/**
+ * Applies a document edit derived from a comment, re-resolving the marker
+ * against live text first. Returns false when the marker can no longer be
+ * found or its paragraph has changed, so the caller can explain rather than
+ * corrupt an unrelated span.
+ */
+const editWithAiComment = (
+  comment: TrackedAiComment,
+  edit: (markdown: string, resolved: TrackedAiComment) => string | null
+): boolean => {
+  const surface = activeSurface()
+  if (!surface) return false
+  const markdown = surface.getMarkdown()
+
+  const fresh = resolveAiComment(markdown, comment)
+  if (!fresh) return false
+
+  const updated = edit(markdown, { ...comment, ...fresh })
+  if (updated === null) return false
+
+  surface.replaceAll(updated)
+  return true
+}
+
+/**
+ * What the composer is about to comment on, captured when it opened. Held
+ * because opening the card moves DOM focus, so the live selection is gone by
+ * the time the user submits. A document comment has no anchor to capture.
+ */
+type PendingCommentAnchor =
+  | { scope: 'span'; range: DocumentRange; text: string }
+  | { scope: 'document' }
+
+let pendingCommentAnchor: PendingCommentAnchor | null = null
+
+/** Opens the composer beside the current selection. */
+const handleAiCommentCompose = () => {
+  const surface = activeSurface()
+  if (!surface) return
+
+  const captured = captureAiSelection()
+  // The composer must not cover the text being commented on, so it is placed
+  // from the live selection geometry — which each surface reports for itself.
+  const anchorRect = captured ? surface.selectionRect() : null
+
+  // No selection is not an error — it means the comment addresses the document
+  // as a whole, which is the unpaired marker form.
+  if (!captured || !anchorRect) {
+    pendingCommentAnchor = { scope: 'document' }
+    const paneSelector = sourceCode.value ? '.source-code' : '.editor-component'
+    const paneRect = document.querySelector(paneSelector)?.getBoundingClientRect()
+    const top = paneRect ? paneRect.top + 24 : 80
+    const left = paneRect ? paneRect.left + 24 : 80
+    bus.emit('ai-comments::compose', {
+      scope: 'document',
+      selection: '',
+      rect: { top, bottom: top, left, right: left },
+      columnRight: paneRect ? paneRect.right : left
+    })
+    return
+  }
+
+  pendingCommentAnchor = { scope: 'span', range: captured.range, text: captured.selection }
+
+  bus.emit('ai-comments::compose', {
+    scope: 'span',
+    selection: captured.selection,
+    rect: anchorRect.rect,
+    columnRight: anchorRect.columnRight
+  })
+}
+
+/** Wraps the captured selection in markers, creating the comment. */
+const handleAiCommentCreate = (payload: unknown) => {
+  const anchor = pendingCommentAnchor
+  pendingCommentAnchor = null
+  const surface = activeSurface()
+  if (!surface || !anchor) return
+
+  const { kind, instruction } = payload as { kind: AiCommentKind; instruction: string }
+  const markdown = surface.getMarkdown()
+
+  if (anchor.scope === 'document') {
+    // Document markers go at the top, where they read as being about the file
+    // rather than about whatever happens to follow them.
+    const updated = `${buildDocumentMarker(kind, instruction)}\n\n${markdown}`
+    surface.replaceAll(updated)
+    const fileId = currentFile.value?.id
+    if (fileId) aiCommentsStore.SYNC(fileId, updated)
+    return
+  }
+
+  const { start, end } = anchor.range
+
+  // The document can move between selecting and submitting; splicing at a stale
+  // offset would wrap unrelated words.
+  if (markdown.slice(start, end) !== anchor.text) {
+    notice.notify({
+      title: 'AI comments',
+      message: 'The selection changed before the comment was added, so nothing was inserted.',
+      type: 'warning',
+      time: 6000
+    })
+    return
+  }
+
+  const { open, close } = buildSpanMarkers(kind, instruction)
+  const updated =
+    markdown.slice(0, start) + open + anchor.text + close + markdown.slice(end)
+
+  surface.replaceAll(updated)
+  // Put the caret after the closing marker so typing resumes past the comment
+  // rather than inside it.
+  const afterClose = start + open.length + anchor.text.length + close.length
+  surface.select(updated, afterClose, afterClose)
+
+  const fileId = currentFile.value?.id
+  if (fileId) aiCommentsStore.SYNC(fileId, updated)
+}
+
+const handleAiCommentAccept = async (payload: unknown) => {
+  const comment = payload as TrackedAiComment
+  if (!comment.suggestion) return
+  await snapshotBeforeAiEdit()
+
+  const applied = editWithAiComment(comment, (markdown, resolved) =>
+    applyAiComment(markdown, resolved, comment.suggestion as string, resolved.target)
+  )
+
+  if (!applied) {
+    notice.notify({
+      title: 'AI comments',
+      message:
+        'That paragraph changed since the suggestion was generated, so it was not applied. Run the comment again.',
+      type: 'warning',
+      time: 6000
+    })
+    return
+  }
+  // The marker is gone from the document, so the tracked comment goes too —
+  // waiting for the debounced scan would leave a resolved entry on screen.
+  aiCommentsStore.FORGET(comment.id)
+}
+
+const handleAiCommentDismiss = (payload: unknown) => {
+  const comment = payload as TrackedAiComment
+  const removed = editWithAiComment(comment, (markdown, resolved) =>
+    removeAiComment(markdown, resolved)
+  )
+  if (removed) aiCommentsStore.FORGET(comment.id)
+}
+
 // handle `duplicate`, `delete`, `create paragraph below`
 const handleParagraph = (type: unknown) => {
   if (sourceCode.value) {
@@ -1496,6 +1859,11 @@ const setMarkdownToEditor = (payload: unknown) => {
     // — the engine may normalize trailing newlines / whitespace on round-trip.
     if (id) {
       resetSyntheticHistory(id, editor.value.getMarkdown())
+      // Populate the review panel with any markers the file already carries.
+      // The store leaves a file's first scan `pending` rather than dispatching,
+      // so opening a document with twenty comments costs nothing until asked.
+      aiCommentsStore.SYNC(id, editor.value.getMarkdown())
+      pointHistoryAtCurrentFile(editor.value.getMarkdown())
     }
     if (newCursor) {
       applyCursor(editor.value, newCursor)
@@ -1822,6 +2190,12 @@ onMounted(() => {
   // The first document's content is set via constructor options, so no
   // `file-loaded` / `setMarkdownToEditor` runs for it — seed its TOC here.
   editorStore.UPDATE_TOC(muya.getTOC())
+  // The mount-loaded document never fires `file-loaded`, so seed its comment
+  // scan here for the same reason the TOC is seeded above.
+  if (currentFile.value?.id) {
+    aiCommentsStore.SYNC(currentFile.value.id, muya.getMarkdown())
+  }
+  pointHistoryAtCurrentFile(muya.getMarkdown())
 
   // Seed the save-tracking baseline for the mount-loaded document (from the
   // engine's OWN serialization, same reason as setMarkdownToEditor). Without
@@ -1864,6 +2238,19 @@ onMounted(() => {
   bus.on('insert-image', insertImage)
   bus.on('image-uploaded', handleUploadedImage)
   bus.on('file-changed', handleFileChange)
+  bus.on('ai::run-prompt', handleAiRunPrompt)
+  bus.on('ai::apply-result', handleAiApplyResult)
+  bus.on('ai-comments::accept', handleAiCommentAccept)
+  bus.on('ai-comments::dismiss', handleAiCommentDismiss)
+  bus.on('ai-comments::compose-request', handleAiCommentCompose)
+  bus.on('ai-comments::create', handleAiCommentCreate)
+  bus.on('history::restore', handleHistoryRestore)
+  // A save is the clearest possible "this state mattered" signal.
+  unlistenTabSaved = window.electron.ipcRenderer.on('mt::tab-saved', (_event, tabId) => {
+    if (!editor.value || tabId !== currentFile.value?.id) return
+    historyStore.currentText = editor.value.getMarkdown()
+    historyStore.CAPTURE('save').catch(reportHistoryFailure)
+  })
   bus.on('flush-active-editor', flushActiveEditor)
   bus.on('editor-blur', blurEditor)
   bus.on('editor-focus', focusEditor)
@@ -1912,6 +2299,8 @@ onMounted(() => {
       toc: editor.value.getTOC(),
       blocks: editor.value.getState()
     })
+    syncAiComments(id, markdown)
+    observeHistory(markdown)
   })
 
   // The engine does not emit `scroll`; listen on the scroll container directly
@@ -2017,6 +2406,15 @@ onBeforeUnmount(() => {
   bus.off('insert-image', insertImage)
   bus.off('image-uploaded', handleUploadedImage)
   bus.off('file-changed', handleFileChange)
+  bus.off('ai::run-prompt', handleAiRunPrompt)
+  bus.off('ai::apply-result', handleAiApplyResult)
+  bus.off('ai-comments::accept', handleAiCommentAccept)
+  bus.off('ai-comments::dismiss', handleAiCommentDismiss)
+  bus.off('ai-comments::compose-request', handleAiCommentCompose)
+  bus.off('ai-comments::create', handleAiCommentCreate)
+  bus.off('history::restore', handleHistoryRestore)
+  unlistenTabSaved?.()
+  if (aiCommentScanTimer) clearTimeout(aiCommentScanTimer)
   bus.off('flush-active-editor', flushActiveEditor)
   bus.off('editor-blur', blurEditor)
   bus.off('editor-focus', focusEditor)

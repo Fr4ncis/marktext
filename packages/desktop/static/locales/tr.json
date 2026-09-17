@@ -251,7 +251,9 @@
       "files": "Dosyalar",
       "search": "Ara",
       "toc": "İçindekiler",
-      "settings": "Ayarlar"
+      "settings": "Ayarlar",
+      "aiComments": "AI comments",
+      "history": "History"
     }
   },
   "commandPalette": {
@@ -437,7 +439,8 @@
       "spelling": "Yazım",
       "theme": "Tema",
       "image": "Görsel",
-      "keybindings": "Kısayol Tuşları"
+      "keybindings": "Kısayol Tuşları",
+      "ai": "AI"
     },
     "general": {
       "title": "Genel",

@@ -416,5 +416,74 @@
     "description": "Watcher--Whether to use polling. Polling may leads to high CPU utilization but is necessary to watch files over a network.--internal",
     "type": "boolean",
     "default": false
+  },
+  "aiEnabled": {
+    "description": "AI--Whether the AI assistant is available from the editor.",
+    "type": "boolean",
+    "default": false
+  },
+  "aiProvider": {
+    "description": "AI--Which model provider to send requests to.",
+    "enum": ["anthropic", "openai", "openrouter", "lmstudio"],
+    "default": "anthropic"
+  },
+  "aiModel": {
+    "description": "AI--Model identifier passed to the provider.",
+    "type": "string",
+    "default": "claude-opus-5"
+  },
+  "aiBaseUrl": {
+    "description": "AI--Overrides the provider's default endpoint. Blank uses the default.",
+    "type": "string",
+    "default": ""
+  },
+  "aiMaxTokens": {
+    "description": "AI--Upper bound on the length of a single rewrite.",
+    "type": "number",
+    "minimum": 256,
+    "maximum": 128000,
+    "default": 8192
+  },
+  "aiTimeoutMs": {
+    "description": "AI--Abort a request that has produced no response within this many milliseconds.",
+    "type": "number",
+    "minimum": 5000,
+    "maximum": 600000,
+    "default": 60000
+  },
+  "aiPersonas": {
+    "description": "AI--Reusable personas, each backed by a Markdown file.--internal",
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "filePath": { "type": "string" }
+      },
+      "required": ["id", "name", "filePath"]
+    },
+    "default": []
+  },
+  "aiDefaultPersonaId": {
+    "description": "AI--Persona used when a prompt does not name its own.",
+    "type": "string",
+    "default": ""
+  },
+  "aiPrompts": {
+    "description": "AI--The editable prompt library. Built-in entries are re-added on load if absent.--internal",
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "template": { "type": "string" },
+        "builtin": { "type": "boolean" },
+        "enabled": { "type": "boolean" }
+      },
+      "required": ["id", "label", "template", "builtin", "enabled"]
+    },
+    "default": []
   }
 }

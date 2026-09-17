@@ -19,6 +19,8 @@
       />
     </div>
     <tab-notifications />
+    <ai-assistant-dialog />
+    <ai-comment-composer />
   </div>
 </template>
 
@@ -29,6 +31,8 @@ import Tabs from './tabs.vue'
 import Editor from './editor.vue'
 import SourceCode from './sourceCode.vue'
 import TabNotifications from './notifications.vue'
+import AiAssistantDialog from '../ai/assistantDialog.vue'
+import AiCommentComposer from '../ai/commentComposer.vue'
 
 defineProps<{
   markdown: string

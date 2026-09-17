@@ -12,6 +12,16 @@ import type {
 } from '@shared/types/ipc'
 import type { MenuTemplate, MenuPopupPosition } from '@shared/types/menu'
 import type { SerializedStat } from '@shared/types/files'
+import type {
+  AIPrompt,
+  AICompletionRequest,
+  AICompletionResult,
+  AIConnectionTestResult,
+  AICredentialStatus,
+  AIProviderId,
+  AIProviderSettings
+} from '@shared/types/ai'
+import type { SnapshotMeta, SnapshotTrigger } from '@shared/types/history'
 
 declare global {
   // ---- Build-time defines (electron-vite `define`) ----
@@ -166,6 +176,30 @@ declare global {
     list(): Promise<string[]>
   }
 
+  // Provider calls run in main; this surface deliberately offers no way to read
+  // a stored API key back out — only to write one and ask whether it exists.
+  interface AiAssistantAPI {
+    complete(
+      requestId: string,
+      settings: AIProviderSettings,
+      request: AICompletionRequest
+    ): Promise<AICompletionResult>
+    cancel(requestId: string): void
+    testConnection(settings: AIProviderSettings): Promise<AIConnectionTestResult>
+    setApiKey(
+      provider: AIProviderId,
+      key: string
+    ): Promise<{ ok: true } | { ok: false; message: string }>
+    credentialStatus(): Promise<AICredentialStatus>
+    isEncryptionAvailable(): Promise<boolean>
+    choosePersonaFile(): Promise<string>
+    showSourceContextMenu(
+      position: { x: number; y: number },
+      hasSelection: boolean,
+      ai: { enabled: boolean; prompts: AIPrompt[] | undefined }
+    ): void
+  }
+
   interface ProcessShim {
     platform: NodeJS.Platform
     arch?: string
@@ -174,6 +208,21 @@ declare global {
     resourcesPath?: string
     cwd: () => string | undefined
     nextTick: (fn: (...args: unknown[]) => void, ...args: unknown[]) => void
+  }
+
+  /** Version history for the active file; all storage lives in main. */
+  interface FileHistoryAPI {
+    list(filePath: string): Promise<SnapshotMeta[]>
+    capture(
+      filePath: string,
+      content: string,
+      trigger: SnapshotTrigger,
+      label?: string
+    ): Promise<SnapshotMeta | null>
+    read(filePath: string, seq: number): Promise<string | null>
+    label(filePath: string, seq: number, label: string): Promise<SnapshotMeta[]>
+    remove(filePath: string, seq: number): Promise<SnapshotMeta[]>
+    clear(filePath: string): Promise<void>
   }
 
   interface Window {
@@ -185,6 +234,8 @@ declare global {
     ripgrep: RipgrepAPI
     uploader: UploaderAPI
     fonts: FontsAPI
+    aiAssistant: AiAssistantAPI
+    fileHistory: FileHistoryAPI
     process: ProcessShim
     rgPath: string
     // Set by the legacy editor store at runtime; consumed by muya internals.
