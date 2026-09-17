@@ -204,4 +204,37 @@ describe('completeWithOpenAICompatible wire format', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.message).toContain('positive integer')
   })
+
+  it('rejects a completion cut off by the token limit', async() => {
+    // The rewrite replaces a document selection verbatim, so a `length` finish
+    // with partial text would splice half a sentence — or an unclosed code
+    // fence — into the file. It must fail rather than be applied.
+    reply = () => ({
+      status: 200,
+      payload: {
+        model: 'test-model',
+        choices: [{ message: { content: 'The first half of the rewrite' }, finish_reason: 'length' }]
+      }
+    })
+
+    const result = await run('openai')
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('invalid-request')
+      expect(result.error.message).toContain('Max tokens')
+    }
+  })
+
+  it('returns the text when the model stops normally', async() => {
+    // The complement of the truncation case: a `stop` finish is a complete
+    // rewrite and must reach the caller unchanged.
+    const result = await run('openai')
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.text).toBe('rewritten')
+      expect(result.model).toBe('test-model')
+    }
+  })
 })

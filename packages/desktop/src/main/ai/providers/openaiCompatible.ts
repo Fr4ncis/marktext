@@ -158,5 +158,20 @@ export const completeWithOpenAICompatible = async(
     return { ok: false, error: aiError('invalid-request', reason) }
   }
 
+  // A `length` finish with text present means the rewrite was cut off
+  // mid-output. That truncated text replaces a document selection verbatim, so
+  // returning it as a success would splice half a sentence — or an unclosed
+  // code fence — into the user's file. Fail instead and say how to fix it, the
+  // same as the empty-`length` case above.
+  if (choice?.finish_reason === 'length') {
+    return {
+      ok: false,
+      error: aiError(
+        'invalid-request',
+        'The response hit the token limit before the rewrite was complete, so it was not applied. Raise "Max tokens" in AI settings and try again.'
+      )
+    }
+  }
+
   return { ok: true, text, model: payload.model ?? settings.model }
 }

@@ -30,6 +30,61 @@ const extractText = (content: Anthropic.ContentBlock[]): string =>
     .map((block) => block.text)
     .join('')
 
+/**
+ * The subset of an Anthropic message the result depends on. Interpreting it is
+ * split out from the SDK call so it can be unit-tested without a live client.
+ */
+export interface AnthropicResponseShape {
+  content: Anthropic.ContentBlock[]
+  stop_reason: Anthropic.Message['stop_reason']
+  model: string
+}
+
+/**
+ * Turn a completed Anthropic response into a result. Kept pure and exported so
+ * the refusal / empty / truncation branches are covered by unit tests; the
+ * transport and retry logic stay in `completeWithAnthropic`.
+ */
+export const interpretAnthropicResponse = (
+  response: AnthropicResponseShape
+): AICompletionResult => {
+  if (response.stop_reason === 'refusal') {
+    return {
+      ok: false,
+      error: aiError(
+        'invalid-request',
+        'The model declined to rewrite this text. Try a different prompt or a different selection.'
+      )
+    }
+  }
+
+  const text = extractText(response.content).trim()
+  if (!text) {
+    const reason =
+      response.stop_reason === 'max_tokens'
+        ? 'The response hit the token limit before producing any text. Raise "Max tokens" in AI settings.'
+        : 'The model returned an empty response.'
+    return { ok: false, error: aiError('invalid-request', reason) }
+  }
+
+  // A `max_tokens` stop with text present means the rewrite was cut off
+  // mid-output. That truncated text replaces a document selection verbatim, so
+  // returning it as a success would splice half a sentence — or an unclosed
+  // code fence — into the user's file. Fail instead and say how to fix it, the
+  // same as the OpenAI-compatible adapter does for `finish_reason === 'length'`.
+  if (response.stop_reason === 'max_tokens') {
+    return {
+      ok: false,
+      error: aiError(
+        'invalid-request',
+        'The response hit the token limit before the rewrite was complete, so it was not applied. Raise "Max tokens" in AI settings and try again.'
+      )
+    }
+  }
+
+  return { ok: true, text, model: response.model }
+}
+
 export const completeWithAnthropic = async(
   settings: AIProviderSettings,
   request: AICompletionRequest,
@@ -67,26 +122,7 @@ export const completeWithAnthropic = async(
       response = await client.messages.create(params, { signal })
     }
 
-    if (response.stop_reason === 'refusal') {
-      return {
-        ok: false,
-        error: aiError(
-          'invalid-request',
-          'The model declined to rewrite this text. Try a different prompt or a different selection.'
-        )
-      }
-    }
-
-    const text = extractText(response.content).trim()
-    if (!text) {
-      const reason =
-        response.stop_reason === 'max_tokens'
-          ? 'The response hit the token limit before producing any text. Raise "Max tokens" in AI settings.'
-          : 'The model returned an empty response.'
-      return { ok: false, error: aiError('invalid-request', reason) }
-    }
-
-    return { ok: true, text, model: response.model }
+    return interpretAnthropicResponse(response)
   } catch (error) {
     if (error instanceof Anthropic.APIError && typeof error.status === 'number') {
       return { ok: false, error: aiError(kindFromStatus(error.status), error.message, error.status) }
