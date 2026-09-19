@@ -94,3 +94,38 @@ export const replaceRange = (
   if (text.slice(range.start, range.end) !== expected) return null
   return text.slice(0, range.start) + replacement + text.slice(range.end)
 }
+
+/** A resolved AI edit: the new document plus the span the replacement now occupies. */
+export interface AiEditPlan {
+  /** The full document with the replacement spliced in. */
+  document: string
+  /** Where the replacement now lives, so the caller can re-select it. */
+  selection: DocumentRange
+}
+
+/**
+ * Pure decision core of applying an AI result to the document. Given the
+ * current markdown and the request payload, it either returns the updated
+ * document and the span the replacement now occupies (so the editor can
+ * re-select it), or null when the document changed under the range while the
+ * request was in flight.
+ *
+ * The selection span is `[start, start + replacement.length)` because the
+ * replacement can differ in length from the original — the end must be derived
+ * from the new text, not the stale `range.end`.
+ *
+ * Kept out of the editor component so this arithmetic and the stale-refusal
+ * branch are unit-testable without a live editing surface.
+ */
+export const planAiEdit = (
+  text: string,
+  payload: { range: DocumentRange; original: string; replacement: string }
+): AiEditPlan | null => {
+  const { range, original, replacement } = payload
+  const document = replaceRange(text, range, replacement, original)
+  if (document === null) return null
+  return {
+    document,
+    selection: { start: range.start, end: range.start + replacement.length }
+  }
+}

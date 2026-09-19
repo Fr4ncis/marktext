@@ -4,6 +4,7 @@ import type {
   AIProviderId,
   AIProviderSettings
 } from '../../../shared/types/ai'
+import { buildUserMessage } from '../../../shared/types/ai'
 import { aiError, classifyThrown, kindFromStatus, messageFromErrorBody } from '../errors'
 
 // One adapter serves OpenAI, OpenRouter, and LM Studio: all three expose
@@ -86,7 +87,7 @@ export const completeWithOpenAICompatible = async(
   // `developer` message on the reasoning models, so no per-provider branch.
   const messages = [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: `${request.prompt}\n\n---\n\n${request.selection}` }
+    { role: 'user', content: buildUserMessage(request) }
   ]
 
   const send = async(tokenField: string): Promise<Response> =>

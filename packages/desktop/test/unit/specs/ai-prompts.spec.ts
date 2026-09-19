@@ -99,3 +99,36 @@ describe('reconcilePrompts', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 })
+
+describe('translate built-ins', () => {
+  const TARGET_LANGUAGE_IDS = [
+    'translate-en',
+    'translate-es',
+    'translate-fr',
+    'translate-de',
+    'translate-zh',
+    'translate-ja',
+    'translate-pt'
+  ]
+
+  it('ships a one-click prompt for every common target language', () => {
+    for (const id of TARGET_LANGUAGE_IDS) {
+      const prompt = BUILTIN_PROMPTS.find((p) => p.id === id)
+      expect(prompt, `missing built-in ${id}`).toBeDefined()
+      expect(prompt?.builtin).toBe(true)
+      expect(prompt?.enabled).toBe(true)
+      expect(prompt?.label).toMatch(/^Translate to /)
+      expect(prompt?.template).toContain('preserving all markdown formatting')
+    }
+  })
+
+  it('reconciles the translate built-ins into a stored library that predates them', () => {
+    // A preferences file from before the extra languages shipped had only
+    // translate-en; reconcile must fill in the rest without duplicating.
+    const stale = [{ ...(BUILTIN_PROMPTS.find((p) => p.id === 'translate-en') as AIPrompt) }]
+    const result = reconcilePrompts(stale)
+    for (const id of TARGET_LANGUAGE_IDS) {
+      expect(result.filter((p) => p.id === id)).toHaveLength(1)
+    }
+  })
+})

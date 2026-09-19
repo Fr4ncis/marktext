@@ -133,7 +133,7 @@ import { useProjectStore } from '@/store/project'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { SyntheticHistory, type IFileHistoryLike } from './syntheticHistory'
-import { isNonEmptyRange, replaceRange, type DocumentRange } from '@/util/documentRange'
+import { isNonEmptyRange, planAiEdit, type DocumentRange } from '@/util/documentRange'
 import {
   codeMirrorSurface,
   muyaSurface,
@@ -1522,16 +1522,16 @@ const handleAiApplyResult = async (payload: unknown) => {
   const surface = activeSurface()
   if (!surface) return
   await snapshotBeforeAiEdit()
-  const { range, original, replacement } = payload as {
+  const typed = payload as {
     range: DocumentRange
     original: string
     replacement: string
   }
 
   const markdown = surface.getMarkdown()
-  const updated = replaceRange(markdown, range, replacement, original)
+  const plan = planAiEdit(markdown, typed)
 
-  if (updated === null) {
+  if (plan === null) {
     // The document moved under us while the request was in flight. Splicing at
     // a stale offset would corrupt unrelated text, so refuse and say why.
     notice.notify({
@@ -1543,10 +1543,10 @@ const handleAiApplyResult = async (payload: unknown) => {
     return
   }
 
-  surface.replaceAll(updated)
+  surface.replaceAll(plan.document)
   // Leave the rewritten span selected so the change is visible and immediately
   // re-editable — the same place the user's attention already was.
-  surface.select(updated, range.start, range.start + replacement.length)
+  surface.select(plan.document, plan.selection.start, plan.selection.end)
 }
 
 // ---------------------------------------------------------------------------

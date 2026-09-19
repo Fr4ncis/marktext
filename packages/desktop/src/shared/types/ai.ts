@@ -229,6 +229,54 @@ export const BUILTIN_PROMPTS: readonly AIPrompt[] = [
       'Translate the following markdown into English, preserving all markdown formatting.',
     builtin: true,
     enabled: true
+  },
+  {
+    id: 'translate-es',
+    label: 'Translate to Spanish',
+    template:
+      'Translate the following markdown into Spanish, preserving all markdown formatting.',
+    builtin: true,
+    enabled: true
+  },
+  {
+    id: 'translate-fr',
+    label: 'Translate to French',
+    template:
+      'Translate the following markdown into French, preserving all markdown formatting.',
+    builtin: true,
+    enabled: true
+  },
+  {
+    id: 'translate-de',
+    label: 'Translate to German',
+    template:
+      'Translate the following markdown into German, preserving all markdown formatting.',
+    builtin: true,
+    enabled: true
+  },
+  {
+    id: 'translate-zh',
+    label: 'Translate to Chinese',
+    template:
+      'Translate the following markdown into Chinese, preserving all markdown formatting.',
+    builtin: true,
+    enabled: true
+  },
+  {
+    id: 'translate-ja',
+    label: 'Translate to Japanese',
+    template:
+      'Translate the following markdown into Japanese, preserving all markdown formatting.',
+    builtin: true,
+    enabled: true
+  },
+  {
+    id: 'translate-pt',
+    label: 'Translate to Portuguese',
+    template:
+      'Translate the following markdown into Portuguese, preserving all markdown formatting.',
+    builtin: true,
+    enabled: true
   }
 ]
 
@@ -277,6 +325,26 @@ export const renderPromptTemplate = (template: string, selection: string): strin
   }
   return template
 }
+
+/**
+ * Fence between the rendered instruction and the raw selection in the user
+ * message. It gives the model an unambiguous boundary so a selection that
+ * itself contains prose reading like an instruction cannot bleed into the
+ * command — the reason a template that omits {@link SELECTION_PLACEHOLDER}
+ * still gets the selection attached rather than inlined.
+ */
+export const PROMPT_SELECTION_SEPARATOR = '\n\n---\n\n'
+
+/**
+ * Assembles the single user-role message every provider sends: the rendered
+ * instruction, the separator, then the selection verbatim. Kept here — shared
+ * by the OpenAI-compatible and Anthropic adapters — so the string that carries
+ * the user's document to the model is defined once and is unit-testable,
+ * rather than duplicated inline in each provider where a drift in one would go
+ * unnoticed.
+ */
+export const buildUserMessage = (request: AICompletionRequest): string =>
+  `${request.prompt}${PROMPT_SELECTION_SEPARATOR}${request.selection}`
 
 /**
  * Merges stored prompts with {@link BUILTIN_PROMPTS}. User edits to a builtin

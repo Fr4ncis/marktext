@@ -89,6 +89,8 @@ describe('DEFAULT_MODELS', () => {
 describe('completeWithOpenAICompatible wire format', () => {
   /** Bodies the adapter actually sent, in order. */
   let sent: Array<Record<string, unknown>>
+  /** Header sets the adapter actually sent, in order (parallel to `sent`). */
+  let sentHeaders: Array<Record<string, string>>
   /** Set per test to shape the reply to each successive call. */
   let reply: (body: Record<string, unknown>) => { status: number; payload: unknown }
 
@@ -116,10 +118,12 @@ describe('completeWithOpenAICompatible wire format', () => {
 
   beforeEach(() => {
     sent = []
+    sentHeaders = []
     reply = () => ({ status: 200, payload: okPayload })
-    vi.stubGlobal('fetch', async(_url: string, init: { body: string }) => {
+    vi.stubGlobal('fetch', async(_url: string, init: { body: string; headers: Record<string, string> }) => {
       const body = JSON.parse(init.body) as Record<string, unknown>
       sent.push(body)
+      sentHeaders.push(init.headers)
       const { status, payload } = reply(body)
       return new Response(JSON.stringify(payload), {
         status,
@@ -236,5 +240,80 @@ describe('completeWithOpenAICompatible wire format', () => {
       expect(result.text).toBe('rewritten')
       expect(result.model).toBe('test-model')
     }
+  })
+
+  it('rejects an empty `length` completion with the produced-no-text message', async() => {
+    // Distinct from the partial-text truncation above: the model hit the cap
+    // before emitting anything at all, so the guidance is worded for that case
+    // ("before producing any text") rather than "before the rewrite was
+    // complete". Whitespace-only counts as empty because the adapter trims.
+    reply = () => ({
+      status: 200,
+      payload: {
+        model: 'test-model',
+        choices: [{ message: { content: '   ' }, finish_reason: 'length' }]
+      }
+    })
+
+    const result = await run('openai')
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('invalid-request')
+      expect(result.error.message).toContain('before producing any text')
+    }
+  })
+
+  it('rejects an empty non-length completion as an empty response', async() => {
+    // No text and a normal `stop`: nothing to apply, and it is not a token-cap
+    // problem, so the message must not mislead the user toward "Max tokens".
+    reply = () => ({
+      status: 200,
+      payload: {
+        model: 'test-model',
+        choices: [{ message: { content: '' }, finish_reason: 'stop' }]
+      }
+    })
+
+    const result = await run('openai')
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('invalid-request')
+      expect(result.error.message).toBe('The model returned an empty response.')
+    }
+  })
+
+  it('reports invalid JSON as a base-URL misconfiguration', async() => {
+    // A 200 whose body is not JSON is the classic symptom of the base URL
+    // pointing at an HTML page or a non-OpenAI API. The parse failure must
+    // surface as actionable guidance, not an unhandled throw.
+    vi.stubGlobal('fetch', async() =>
+      new Response('<!doctype html><html>not json</html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' }
+      })
+    )
+
+    const result = await run('openai')
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('invalid-request')
+      expect(result.error.message).toContain('not valid JSON')
+      expect(result.error.message).toContain('base URL')
+    }
+  })
+
+  it('sends OpenRouter attribution headers only for OpenRouter', async() => {
+    // OpenRouter uses HTTP-Referer / X-Title to attribute traffic and gate
+    // some models; OpenAI and LM Studio must not receive them.
+    await run('openrouter')
+    await run('openai')
+
+    expect(sentHeaders[0]['HTTP-Referer']).toBe('https://marktext.me')
+    expect(sentHeaders[0]['X-Title']).toBe('MarkText')
+    expect(sentHeaders[1]).not.toHaveProperty('HTTP-Referer')
+    expect(sentHeaders[1]).not.toHaveProperty('X-Title')
   })
 })

@@ -3,6 +3,7 @@ import {
   isNonEmptyRange,
   lineChToOffset,
   offsetToLineCh,
+  planAiEdit,
   replaceRange,
   toDocumentRange
 } from '@/util/documentRange'
@@ -88,5 +89,37 @@ describe('replaceRange', () => {
   it('allows a replacement that changes the document length', () => {
     expect(replaceRange('abc', { start: 1, end: 2 }, 'XYZ', 'b')).toBe('aXYZc')
     expect(replaceRange('abc', { start: 1, end: 2 }, '', 'b')).toBe('ac')
+  })
+})
+
+describe('planAiEdit', () => {
+  // The editor's apply-result handler delegates the whole decision here, so the
+  // splice, the stale-document refusal, and the re-select span are all covered
+  // without a live editing surface.
+
+  it('returns the updated document and the span the replacement now occupies', () => {
+    const plan = planAiEdit(DOC, { range: { start: 9, end: 14 }, original: 'First', replacement: 'Third' })
+    expect(plan).toEqual({
+      document: ['# Title', '', 'Third paragraph.', 'Second paragraph.'].join('\n'),
+      selection: { start: 9, end: 14 }
+    })
+  })
+
+  it('derives the selection end from the replacement length, not the stale range end', () => {
+    // A longer replacement must leave the selection covering the NEW text; using
+    // the original range.end (14) would under-select and leave a tail unselected.
+    const longer = planAiEdit(DOC, { range: { start: 9, end: 14 }, original: 'First', replacement: 'Rewritten' })
+    expect(longer?.selection).toEqual({ start: 9, end: 9 + 'Rewritten'.length })
+    expect(longer?.document.slice(longer.selection.start, longer.selection.end)).toBe('Rewritten')
+
+    const shorter = planAiEdit('abcdef', { range: { start: 1, end: 5 }, original: 'bcde', replacement: 'X' })
+    expect(shorter).toEqual({ document: 'aXf', selection: { start: 1, end: 2 } })
+  })
+
+  it('refuses (returns null) when the document changed under the range', () => {
+    // Same stale-offset guard as replaceRange: the caller shows a warning and
+    // leaves the document untouched rather than corrupting unrelated text.
+    expect(planAiEdit(DOC, { range: { start: 9, end: 14 }, original: 'Wrong', replacement: 'X' })).toBeNull()
+    expect(planAiEdit(DOC, { range: { start: 0, end: DOC.length + 5 }, original: '', replacement: 'X' })).toBeNull()
   })
 })

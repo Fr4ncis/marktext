@@ -4,6 +4,7 @@ import type {
   AICompletionResult,
   AIProviderSettings
 } from '../../../shared/types/ai'
+import { buildUserMessage } from '../../../shared/types/ai'
 import { aiError, classifyThrown, kindFromStatus } from '../errors'
 
 // Anthropic is the one provider that is not OpenAI-shaped, so it goes through
@@ -102,7 +103,7 @@ export const completeWithAnthropic = async(
     messages: [
       {
         role: 'user',
-        content: `${request.prompt}\n\n---\n\n${request.selection}`
+        content: buildUserMessage(request)
       }
     ]
   }
