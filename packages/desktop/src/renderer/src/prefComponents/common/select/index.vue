@@ -19,6 +19,10 @@
     <el-select
       v-model="selectValue"
       :disabled="disable"
+      :filterable="allowCreate"
+      :allow-create="allowCreate"
+      :default-first-option="allowCreate"
+      :reserve-keyword="false"
       @change="select"
     >
       <el-option
@@ -49,13 +53,21 @@ interface SelectProps extends PrefControlBaseProps {
   value: SelectValue
   options: ReadonlyArray<PrefSelectOption<SelectValue>>
   onChange: (value: SelectValue) => void
+  /**
+   * Turns the control into a combo box: the options become suggestions and a
+   * typed value is accepted. For settings whose valid range the app cannot
+   * enumerate — an AI model identifier, which providers add between releases —
+   * where a plain select would lock the user to a stale list.
+   */
+  allowCreate?: boolean
 }
 
 const props = withDefaults(defineProps<SelectProps>(), {
   description: '',
   notes: '',
   more: '',
-  disable: false
+  disable: false,
+  allowCreate: false
 })
 
 const selectValue = ref<SelectValue>(props.value)

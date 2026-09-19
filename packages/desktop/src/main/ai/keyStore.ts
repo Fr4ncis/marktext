@@ -3,7 +3,7 @@ import path from 'node:path'
 import { app, safeStorage } from 'electron'
 import log from 'electron-log'
 import type { AICredentialStatus, AIProviderId } from '../../shared/types/ai'
-import { PROVIDERS_REQUIRING_KEY } from '../../shared/types/ai'
+import { AI_PROVIDER_IDS, PROVIDERS_REQUIRING_KEY } from '../../shared/types/ai'
 
 // API keys are deliberately kept out of preferences.json: users paste that file
 // into bug reports, sync it between machines, and back it up. Ciphertext lives
@@ -103,15 +103,19 @@ export const getApiKey = async(provider: AIProviderId): Promise<string | null> =
   }
 }
 
-/** Which providers have a key on file. Used to render the settings pane. */
+/**
+ * Which providers have a key on file. Used to render the settings pane.
+ *
+ * Derived from `AI_PROVIDER_IDS` rather than listed literally: a hardcoded
+ * object silently reports `false` for every provider added after it was
+ * written, which reads in the UI as "no key saved" for a key that is in fact
+ * stored.
+ */
 export const getCredentialStatus = async(): Promise<AICredentialStatus> => {
   const store = await readFileOrEmpty()
-  return {
-    anthropic: Boolean(store.anthropic),
-    openai: Boolean(store.openai),
-    openrouter: Boolean(store.openrouter),
-    lmstudio: Boolean(store.lmstudio)
-  }
+  return Object.fromEntries(
+    AI_PROVIDER_IDS.map((provider) => [provider, Boolean(store[provider])])
+  ) as AICredentialStatus
 }
 
 /** Whether `provider` needs a key at all — LM Studio serves unauthenticated. */

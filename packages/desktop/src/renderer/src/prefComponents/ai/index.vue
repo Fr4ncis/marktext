@@ -18,8 +18,20 @@
           :disable="!aiEnabled"
           :on-change="handleProviderChange"
         />
-        <text-box
+        <cur-select
+          v-if="modelOptions.length"
           description="Model"
+          notes="Pick a listed model or type any identifier the provider accepts."
+          :value="aiModel"
+          :options="modelOptions"
+          :allow-create="true"
+          :disable="!aiEnabled"
+          :on-change="(value) => setPreference('aiModel', String(value))"
+        />
+        <text-box
+          v-else
+          description="Model"
+          :notes="modelNotes"
           :input="aiModel"
           :disable="!aiEnabled"
           :on-change="(value) => setPreference('aiModel', value)"
@@ -341,9 +353,12 @@ import { usePreferencesStore } from '@/store/preferences'
 import type { PreferencesState } from '@/store/preferences'
 import type { AIPersona, AIPrompt, AIProviderId } from '@shared/types/ai'
 import {
+  AI_PROVIDER_IDS,
   BUILTIN_PROMPTS,
   DEFAULT_BASE_URLS,
   DEFAULT_MODELS,
+  PROVIDER_LABELS,
+  PROVIDER_MODELS,
   PROVIDERS_REQUIRING_KEY,
   SELECTION_PLACEHOLDER,
   reconcilePrompts
@@ -370,12 +385,10 @@ const {
   aiDefaultPersonaId
 } = storeToRefs(preferenceStore)
 
-const providerOptions: PrefSelectOption[] = [
-  { label: 'Anthropic', value: 'anthropic' },
-  { label: 'OpenAI', value: 'openai' },
-  { label: 'OpenRouter', value: 'openrouter' },
-  { label: 'LM Studio (local)', value: 'lmstudio' }
-]
+const providerOptions: PrefSelectOption[] = AI_PROVIDER_IDS.map((id) => ({
+  label: PROVIDER_LABELS[id],
+  value: id
+}))
 
 const apiKeyDraft = ref('')
 const hasStoredKey = ref(false)
@@ -386,8 +399,22 @@ const testOk = ref(false)
 
 const currentProvider = computed(() => aiProvider.value as AIProviderId)
 const providerNeedsKey = computed(() => PROVIDERS_REQUIRING_KEY.includes(currentProvider.value))
-const providerLabel = computed(
-  () => providerOptions.find((option) => option.value === aiProvider.value)?.label ?? ''
+const providerLabel = computed(() => PROVIDER_LABELS[currentProvider.value] ?? '')
+
+/**
+ * Suggestions for the Model field. Empty for the local providers, which serve
+ * whatever the user has loaded or pulled — there is no list to curate, so the
+ * field stays plain free text rather than offering a guess.
+ */
+const modelOptions = computed<PrefSelectOption[]>(() =>
+  PROVIDER_MODELS[currentProvider.value].map((model) => ({
+    label: model.label,
+    value: model.id
+  }))
+)
+
+const modelNotes = computed(() =>
+  `${providerLabel.value} serves whatever model you have loaded — enter its identifier.`
 )
 
 const keyPlaceholder = computed(() =>

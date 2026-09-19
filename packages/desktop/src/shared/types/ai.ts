@@ -6,7 +6,38 @@
 // consume this module.
 
 /** Providers the assistant can talk to. */
-export type AIProviderId = 'anthropic' | 'openai' | 'openrouter' | 'lmstudio'
+export type AIProviderId =
+  | 'anthropic'
+  | 'openai'
+  | 'openrouter'
+  | 'lmstudio'
+  | 'google'
+  | 'groq'
+  | 'deepseek'
+  | 'mistral'
+  | 'cerebras'
+  | 'ollama'
+
+/**
+ * Every provider id, in the order the settings pane offers them: hosted
+ * providers first, local ones last.
+ *
+ * Exported so the tables below and `getCredentialStatus` can be derived from a
+ * single list rather than restated per provider — a hardcoded restatement is
+ * what silently reported "no key on file" for any provider added.
+ */
+export const AI_PROVIDER_IDS: readonly AIProviderId[] = [
+  'anthropic',
+  'openai',
+  'openrouter',
+  'google',
+  'groq',
+  'deepseek',
+  'mistral',
+  'cerebras',
+  'lmstudio',
+  'ollama'
+]
 
 /**
  * Placeholder substituted with the user's selection when a prompt template is
@@ -123,18 +154,42 @@ export type AICredentialStatus = Record<AIProviderId, boolean>
  * Providers whose API is OpenAI's `/chat/completions`. `anthropic` is the only
  * one that isn't, and it goes through the official SDK instead.
  */
-export const OPENAI_COMPATIBLE_PROVIDERS: readonly AIProviderId[] = [
-  'openai',
-  'openrouter',
-  'lmstudio'
-]
+export const OPENAI_COMPATIBLE_PROVIDERS: readonly AIProviderId[] = AI_PROVIDER_IDS.filter(
+  (id) => id !== 'anthropic'
+)
 
-/** Endpoint used when `baseUrl` is blank. LM Studio is local-only by nature. */
+/** Human-readable provider names. The settings pane offers these verbatim. */
+export const PROVIDER_LABELS: Record<AIProviderId, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  openrouter: 'OpenRouter',
+  google: 'Google AI (Gemini)',
+  groq: 'Groq',
+  deepseek: 'DeepSeek',
+  mistral: 'Mistral',
+  cerebras: 'Cerebras',
+  lmstudio: 'LM Studio (local)',
+  ollama: 'Ollama (local)'
+}
+
+/**
+ * Endpoint used when `baseUrl` is blank. The two local providers serve on
+ * loopback, so their defaults are the ports their installers use.
+ *
+ * Google's entry is its OpenAI-compatibility endpoint rather than the native
+ * `generativelanguage` REST shape, which is what lets it share the adapter.
+ */
 export const DEFAULT_BASE_URLS: Record<AIProviderId, string> = {
   anthropic: 'https://api.anthropic.com',
   openai: 'https://api.openai.com/v1',
   openrouter: 'https://openrouter.ai/api/v1',
-  lmstudio: 'http://127.0.0.1:1234/v1'
+  google: 'https://generativelanguage.googleapis.com/v1beta/openai',
+  groq: 'https://api.groq.com/openai/v1',
+  deepseek: 'https://api.deepseek.com/v1',
+  mistral: 'https://api.mistral.ai/v1',
+  cerebras: 'https://api.cerebras.ai/v1',
+  lmstudio: 'http://127.0.0.1:1234/v1',
+  ollama: 'http://127.0.0.1:11434/v1'
 }
 
 /**
@@ -150,15 +205,93 @@ export const DEFAULT_MODELS: Record<AIProviderId, string> = {
   anthropic: 'claude-opus-5',
   openai: 'gpt-5.6',
   openrouter: 'anthropic/claude-opus-5',
-  lmstudio: 'local-model'
+  google: 'gemini-2.5-pro',
+  groq: 'llama-3.3-70b-versatile',
+  deepseek: 'deepseek-chat',
+  mistral: 'mistral-large-latest',
+  cerebras: 'llama-3.3-70b',
+  lmstudio: 'local-model',
+  ollama: 'llama3.3'
 }
 
-/** Providers that authenticate with a key. LM Studio runs unauthenticated. */
-export const PROVIDERS_REQUIRING_KEY: readonly AIProviderId[] = [
-  'anthropic',
-  'openai',
-  'openrouter'
-]
+/**
+ * Providers that authenticate with a key. The two local ones serve
+ * unauthenticated, so the settings pane hides the key field for them.
+ */
+export const PROVIDERS_REQUIRING_KEY: readonly AIProviderId[] = AI_PROVIDER_IDS.filter(
+  (id) => id !== 'lmstudio' && id !== 'ollama'
+)
+
+/**
+ * One selectable model. `tokenLimitField` overrides the provider-level default
+ * for the output-length parameter.
+ *
+ * That parameter is per-model rather than per-provider — OpenAI's GPT-5 family
+ * takes `max_completion_tokens` while older deployments behind an
+ * OpenAI-compatible host still take `max_tokens` — so it is carried on the
+ * model entry instead of being inferred from the name. See
+ * `resolveTokenLimitField` in main/ai/providers/openaiCompatible.ts.
+ */
+export interface AIModelOption {
+  id: string
+  label: string
+  tokenLimitField?: 'max_tokens' | 'max_completion_tokens'
+}
+
+/**
+ * Models offered per provider. The settings pane presents these as suggestions
+ * and still accepts a typed value, because providers ship models faster than
+ * this app ships releases.
+ *
+ * The local providers serve whatever the user has pulled or loaded, so they
+ * carry no list — there is nothing to curate, and a stale guess would be worse
+ * than the free-text field.
+ */
+export const PROVIDER_MODELS: Record<AIProviderId, readonly AIModelOption[]> = {
+  anthropic: [
+    { id: 'claude-opus-5', label: 'Opus 5' },
+    { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+    { id: 'claude-fable-5-1', label: 'Fable 5.1' },
+    { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' }
+  ],
+  openai: [
+    { id: 'gpt-5.6', label: 'GPT-5.6', tokenLimitField: 'max_completion_tokens' },
+    { id: 'gpt-5.6-mini', label: 'GPT-5.6 mini', tokenLimitField: 'max_completion_tokens' },
+    { id: 'gpt-5', label: 'GPT-5', tokenLimitField: 'max_completion_tokens' }
+  ],
+  openrouter: [
+    { id: 'anthropic/claude-opus-5', label: 'Opus 5' },
+    { id: 'anthropic/claude-sonnet-5', label: 'Sonnet 5' },
+    { id: 'openai/gpt-5.6', label: 'GPT-5.6', tokenLimitField: 'max_completion_tokens' },
+    { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+    { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
+    { id: 'deepseek/deepseek-chat', label: 'DeepSeek Chat' },
+    { id: 'qwen/qwen-2.5-72b-instruct', label: 'Qwen 2.5 72B' }
+  ],
+  google: [
+    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' }
+  ],
+  groq: [
+    { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile' },
+    { id: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant' }
+  ],
+  deepseek: [
+    { id: 'deepseek-chat', label: 'DeepSeek Chat' },
+    { id: 'deepseek-reasoner', label: 'DeepSeek Reasoner' }
+  ],
+  mistral: [
+    { id: 'mistral-large-latest', label: 'Mistral Large' },
+    { id: 'mistral-small-latest', label: 'Mistral Small' },
+    { id: 'codestral-latest', label: 'Codestral' }
+  ],
+  cerebras: [
+    { id: 'llama-3.3-70b', label: 'Llama 3.3 70B' },
+    { id: 'llama3.1-8b', label: 'Llama 3.1 8B' }
+  ],
+  lmstudio: [],
+  ollama: []
+}
 
 /**
  * Shipped prompt library. Kept here rather than in the JSON schema so both

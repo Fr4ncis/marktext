@@ -26,6 +26,27 @@ describe('resolveTokenLimitField', () => {
     expect(resolveTokenLimitField('openrouter')).toBe('max_tokens')
     expect(resolveTokenLimitField('lmstudio')).toBe('max_tokens')
   })
+
+  it('lets a listed model override the provider default', () => {
+    // OpenRouter fronts the GPT-5 family alongside models taking the old name,
+    // so the spelling cannot be decided by provider alone.
+    expect(resolveTokenLimitField('openrouter', 'openai/gpt-5.6')).toBe('max_completion_tokens')
+    expect(resolveTokenLimitField('openrouter', 'anthropic/claude-opus-5')).toBe('max_tokens')
+  })
+
+  it('falls back to the provider default for a model the user typed', () => {
+    // A value absent from the catalog is the common case for local servers and
+    // for models newer than the release. The retry below fixes a wrong guess,
+    // so the fallback costs at most one extra round trip.
+    expect(resolveTokenLimitField('openrouter', 'some-vendor/unreleased-model')).toBe('max_tokens')
+    expect(resolveTokenLimitField('openai', 'fine-tuned-internal')).toBe('max_completion_tokens')
+  })
+
+  it('defaults the new providers to max_tokens', () => {
+    for (const provider of ['google', 'groq', 'deepseek', 'mistral', 'cerebras', 'ollama'] as const) {
+      expect(resolveTokenLimitField(provider), provider).toBe('max_tokens')
+    }
+  })
 })
 
 describe('isTokenLimitFieldRejection', () => {

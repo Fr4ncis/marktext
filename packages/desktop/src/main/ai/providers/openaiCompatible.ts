@@ -4,10 +4,10 @@ import type {
   AIProviderId,
   AIProviderSettings
 } from '../../../shared/types/ai'
-import { buildUserMessage } from '../../../shared/types/ai'
+import { buildUserMessage, PROVIDER_MODELS } from '../../../shared/types/ai'
 import { aiError, classifyThrown, kindFromStatus, messageFromErrorBody } from '../errors'
 
-// One adapter serves OpenAI, OpenRouter, and LM Studio: all three expose
+// One adapter serves every provider except Anthropic: all of them expose
 // POST {baseUrl}/chat/completions with OpenAI's request and response shape.
 // Only the auth header, a couple of optional courtesy headers, and the name of
 // the output-length parameter differ.
@@ -17,14 +17,20 @@ import { aiError, classifyThrown, kindFromStatus, messageFromErrorBody } from '.
  *
  * OpenAI removed `max_tokens` from Chat Completions for the GPT-5 and o-series
  * models — sending it returns 400 "Unsupported parameter: 'max_tokens' is not
- * supported with this model. Use 'max_completion_tokens' instead." Every
- * current OpenAI model is in that family, so OpenAI always gets the new name.
+ * supported with this model. Use 'max_completion_tokens' instead."
  *
- * OpenRouter and LM Studio both document `max_tokens` and not the newer name,
- * so they keep the original. `resolveTokenLimitField` is exported for tests.
+ * Which spelling applies is a property of the model, not the provider: an
+ * OpenAI-compatible host can front both families at once, and OpenRouter does.
+ * So the catalog entry decides when it says so, and the provider default only
+ * covers models absent from the list — including anything the user typed. The
+ * retry below still corrects a wrong guess, so a missing entry costs one extra
+ * round trip rather than a failed request. Exported for tests.
  */
-export const resolveTokenLimitField = (provider: AIProviderId): string =>
-  provider === 'openai' ? 'max_completion_tokens' : 'max_tokens'
+export const resolveTokenLimitField = (provider: AIProviderId, model?: string): string => {
+  const entry = PROVIDER_MODELS[provider]?.find((option) => option.id === model)
+  if (entry?.tokenLimitField) return entry.tokenLimitField
+  return provider === 'openai' ? 'max_completion_tokens' : 'max_tokens'
+}
 
 /** The other spelling, used for the one-shot retry below. */
 const alternateTokenLimitField = (field: string): string =>
@@ -102,7 +108,7 @@ export const completeWithOpenAICompatible = async(
       signal
     })
 
-  const tokenField = resolveTokenLimitField(settings.provider)
+  const tokenField = resolveTokenLimitField(settings.provider, settings.model)
   let response: Response
   try {
     response = await send(tokenField)

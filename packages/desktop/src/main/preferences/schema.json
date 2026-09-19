@@ -424,7 +424,18 @@
   },
   "aiProvider": {
     "description": "AI--Which model provider to send requests to.",
-    "enum": ["anthropic", "openai", "openrouter", "lmstudio"],
+    "enum": [
+      "anthropic",
+      "openai",
+      "openrouter",
+      "google",
+      "groq",
+      "deepseek",
+      "mistral",
+      "cerebras",
+      "lmstudio",
+      "ollama"
+    ],
     "default": "anthropic"
   },
   "aiModel": {
