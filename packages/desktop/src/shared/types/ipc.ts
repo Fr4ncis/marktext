@@ -38,6 +38,8 @@ import type {
   AICompletionResult,
   AIConnectionTestResult,
   AICredentialStatus,
+  AIShellKeyCandidate,
+  AIShellKeyImportResult,
   AIProviderId,
   AIProviderSettings
 } from './ai'
@@ -64,6 +66,13 @@ export interface IpcInvokeChannels {
     ret: { ok: true } | { ok: false; message: string }
   }
   'mt::ai::test-connection': { args: [settings: AIProviderSettings]; ret: AIConnectionTestResult }
+  // Scans the shell profiles for provider keys. Returns masked values only —
+  // the raw key never crosses to the renderer, which confirms by variable name.
+  'mt::ai::scan-shell-profile': { args: []; ret: AIShellKeyCandidate[] }
+  'mt::ai::import-shell-keys': {
+    args: [variables: string[]]
+    ret: AIShellKeyImportResult[]
+  }
   'mt::cmd::exists': { args: [name: string]; ret: boolean }
   'mt::history::capture': {
     args: [filePath: string, content: string, trigger: SnapshotTrigger, label?: string]

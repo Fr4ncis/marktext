@@ -7,7 +7,9 @@ import type {
   AIConnectionTestResult,
   AICredentialStatus,
   AIProviderId,
-  AIProviderSettings
+  AIProviderSettings,
+  AIShellKeyCandidate,
+  AIShellKeyImportResult
 } from '../../shared/types/ai'
 import { DEFAULT_BASE_URLS } from '../../shared/types/ai'
 import { aiError } from './errors'
@@ -22,6 +24,7 @@ import {
 import { completeWithAnthropic } from './providers/anthropic'
 import { completeWithOpenAICompatible } from './providers/openaiCompatible'
 import { resolveSystemPrompt } from './persona'
+import { importShellKeys, scanShellProfiles } from './shellProfile'
 import { showSourceCodeContextMenu } from '../contextMenu/editor'
 
 // All provider traffic terminates here. The renderer is sandboxed and cannot
@@ -183,6 +186,17 @@ export const registerAiHandlers = (): void => {
   ipcMain.handle(
     'mt::ai::credential-status',
     async(): Promise<AICredentialStatus> => getCredentialStatus()
+  )
+
+  ipcMain.handle(
+    'mt::ai::scan-shell-profile',
+    async(): Promise<AIShellKeyCandidate[]> => scanShellProfiles()
+  )
+
+  ipcMain.handle(
+    'mt::ai::import-shell-keys',
+    async(_event, variables: string[]): Promise<AIShellKeyImportResult[]> =>
+      importShellKeys(variables)
   )
 
   ipcMain.handle('mt::ai::encryption-available', (): boolean => isEncryptionAvailable())

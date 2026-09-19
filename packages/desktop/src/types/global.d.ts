@@ -18,6 +18,8 @@ import type {
   AICompletionResult,
   AIConnectionTestResult,
   AICredentialStatus,
+  AIShellKeyCandidate,
+  AIShellKeyImportResult,
   AIProviderId,
   AIProviderSettings
 } from '@shared/types/ai'
@@ -191,6 +193,10 @@ declare global {
       key: string
     ): Promise<{ ok: true } | { ok: false; message: string }>
     credentialStatus(): Promise<AICredentialStatus>
+    // Returns masked candidates only; the raw key stays in main, and the import
+    // is confirmed by variable name.
+    scanShellProfile(): Promise<AIShellKeyCandidate[]>
+    importShellKeys(variables: string[]): Promise<AIShellKeyImportResult[]>
     isEncryptionAvailable(): Promise<boolean>
     choosePersonaFile(): Promise<string>
     showSourceContextMenu(

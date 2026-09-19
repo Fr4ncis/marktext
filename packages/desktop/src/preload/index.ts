@@ -23,6 +23,8 @@ import type {
   AICompletionResult,
   AIConnectionTestResult,
   AICredentialStatus,
+  AIShellKeyCandidate,
+  AIShellKeyImportResult,
   AIProviderId,
   AIProviderSettings
 } from '@shared/types/ai'
@@ -251,6 +253,9 @@ const aiAPI = {
     invoke('mt::ai::test-connection', settings),
   setApiKey: (provider: AIProviderId, key: string) => invoke('mt::ai::set-key', provider, key),
   credentialStatus: (): Promise<AICredentialStatus> => invoke('mt::ai::credential-status'),
+  scanShellProfile: (): Promise<AIShellKeyCandidate[]> => invoke('mt::ai::scan-shell-profile'),
+  importShellKeys: (variables: string[]): Promise<AIShellKeyImportResult[]> =>
+    invoke('mt::ai::import-shell-keys', variables),
   isEncryptionAvailable: (): Promise<boolean> => invoke('mt::ai::encryption-available'),
   choosePersonaFile: (): Promise<string> => invoke('mt::ai::choose-persona-file'),
   showSourceContextMenu: (

@@ -142,6 +142,58 @@ export type AIErrorKind =
   /** Anything not otherwise classified. */
   | 'unknown'
 
+/**
+ * Environment variable names that hold each provider's key, in the order the
+ * scan prefers them. Providers with no entry authenticate with no key.
+ *
+ * Several providers are reached through more than one conventional name, so the
+ * list is ordered rather than a single string: the first one present wins.
+ */
+export const PROVIDER_ENV_VARS: Record<AIProviderId, readonly string[]> = {
+  anthropic: ['ANTHROPIC_API_KEY'],
+  openai: ['OPENAI_API_KEY'],
+  openrouter: ['OPENROUTER_API_KEY'],
+  google: ['GOOGLE_AI_API_KEY', 'GEMINI_API_KEY'],
+  groq: ['GROQ_API_KEY'],
+  deepseek: ['DEEPSEEK_API_KEY'],
+  mistral: ['MISTRAL_API_KEY', 'CODESTRAL_API_KEY'],
+  cerebras: ['CEREBRAS_API_KEY'],
+  lmstudio: [],
+  ollama: []
+}
+
+/**
+ * One key found in a shell profile, offered for import.
+ *
+ * Deliberately carries no secret: `masked` is for display only, and the raw
+ * value never leaves the main process. The renderer confirms by variable name,
+ * and main re-reads the file to do the write — so a compromised renderer cannot
+ * read a key it did not already have.
+ */
+export interface AIShellKeyCandidate {
+  provider: AIProviderId
+  /** Environment variable the value came from, e.g. `ANTHROPIC_API_KEY`. */
+  variable: string
+  /** Elided form, safe to render. Never the key. */
+  masked: string
+  /** Absolute path of the profile file it was read from. */
+  file: string
+  /** Whether a key for this provider is already stored. */
+  alreadySet: boolean
+}
+
+/**
+ * Outcome of importing one candidate. Reported per key rather than per batch, so
+ * a partial success still tells the user which keys landed.
+ *
+ * Shaped like the `mt::ai::set-key` reply — a message rather than an
+ * `AIErrorPayload`, since these failures are local storage problems, not
+ * provider responses.
+ */
+export type AIShellKeyImportResult =
+  | { variable: string; provider: AIProviderId; ok: true }
+  | { variable: string; provider: AIProviderId; ok: false; message: string }
+
 /** Result of a "does this configuration work" probe from the settings pane. */
 export type AIConnectionTestResult =
   | { ok: true; model: string }

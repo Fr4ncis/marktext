@@ -97,6 +97,50 @@
 
       <div class="ai-key-row">
         <el-button
+          :loading="scanning"
+          @click="scanShellProfile"
+        >
+          Import from shell profile
+        </el-button>
+        <span
+          v-if="scanMessage"
+          class="ai-test-result"
+        >{{ scanMessage }}</span>
+      </div>
+      <template v-if="candidates.length">
+        <div class="description">
+          Found in your shell profile. Only the keys you tick are imported, and
+          each one is stored in the OS keychain like a pasted key.
+        </div>
+        <div
+          v-for="candidate in candidates"
+          :key="candidate.variable"
+          class="ai-import-row"
+        >
+          <el-checkbox v-model="selectedVariables[candidate.variable]">
+            <span class="ai-import-var">{{ candidate.variable }}</span>
+          </el-checkbox>
+          <span class="ai-import-meta">
+            {{ PROVIDER_LABELS[candidate.provider] }} · {{ candidate.masked }}
+            <template v-if="candidate.alreadySet"> · already set</template>
+          </span>
+        </div>
+        <div class="ai-key-row">
+          <el-button
+            :disabled="!anySelected"
+            :loading="importing"
+            @click="importSelectedKeys"
+          >
+            Import selected
+          </el-button>
+          <el-button @click="dismissCandidates">
+            Cancel
+          </el-button>
+        </div>
+      </template>
+
+      <div class="ai-key-row">
+        <el-button
           :loading="testing"
           @click="testConnection"
         >
@@ -351,7 +395,7 @@ import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { usePreferencesStore } from '@/store/preferences'
 import type { PreferencesState } from '@/store/preferences'
-import type { AIPersona, AIPrompt, AIProviderId } from '@shared/types/ai'
+import type { AIPersona, AIPrompt, AIProviderId, AIShellKeyCandidate } from '@shared/types/ai'
 import {
   AI_PROVIDER_IDS,
   BUILTIN_PROMPTS,
@@ -391,6 +435,12 @@ const providerOptions: PrefSelectOption[] = AI_PROVIDER_IDS.map((id) => ({
 }))
 
 const apiKeyDraft = ref('')
+const scanning = ref(false)
+const importing = ref(false)
+const scanMessage = ref('')
+const candidates = ref<AIShellKeyCandidate[]>([])
+/** Which candidates the user has ticked, keyed by variable name. */
+const selectedVariables = ref<Record<string, boolean>>({})
 const hasStoredKey = ref(false)
 const encryptionAvailable = ref(true)
 const testing = ref(false)
@@ -450,6 +500,74 @@ const handleProviderChange = async (value: string | number | boolean): Promise<v
   apiKeyDraft.value = ''
   testMessage.value = ''
   await refreshCredentialStatus()
+}
+
+const anySelected = computed(() => Object.values(selectedVariables.value).some(Boolean))
+
+const dismissCandidates = (): void => {
+  candidates.value = []
+  selectedVariables.value = {}
+  scanMessage.value = ''
+}
+
+/**
+ * Lists importable keys. Only masked values come back — the raw key stays in
+ * main, and the import below confirms by variable name, so nothing the renderer
+ * holds is worth stealing.
+ *
+ * A key already on file is offered unticked: re-importing would silently replace
+ * a key the user may have pasted deliberately.
+ */
+const scanShellProfile = async (): Promise<void> => {
+  scanning.value = true
+  try {
+    const found = await window.aiAssistant.scanShellProfile()
+    candidates.value = found
+    selectedVariables.value = Object.fromEntries(
+      found.map((candidate) => [candidate.variable, !candidate.alreadySet])
+    )
+    scanMessage.value = found.length
+      ? ''
+      : 'No provider keys found in ~/.zshrc, ~/.zshenv, ~/.bashrc, ~/.bash_profile or ~/.profile.'
+  } finally {
+    scanning.value = false
+  }
+}
+
+const importSelectedKeys = async (): Promise<void> => {
+  const variables = Object.entries(selectedVariables.value)
+    .filter(([, ticked]) => ticked)
+    .map(([variable]) => variable)
+
+  importing.value = true
+  try {
+    const results = await window.aiAssistant.importShellKeys(variables)
+    const failures = results.filter((result) => !result.ok)
+    const imported = results.length - failures.length
+
+    // Reported per key: an unavailable keychain fails all of them for one
+    // reason, but a partial success still needs to say what landed.
+    if (imported) {
+      notice.notify({
+        title: 'AI assistant',
+        type: 'primary',
+        message: `Imported ${imported} key${imported === 1 ? '' : 's'}.`
+      })
+    }
+    for (const failure of failures) {
+      if (failure.ok) continue
+      notice.notify({
+        title: `AI assistant — ${failure.variable}`,
+        type: 'error',
+        message: failure.message
+      })
+    }
+
+    dismissCandidates()
+    await refreshCredentialStatus()
+  } finally {
+    importing.value = false
+  }
 }
 
 const saveApiKey = async (): Promise<void> => {
@@ -619,5 +737,22 @@ onMounted(async () => {
 
 .ai-add-prompt {
   margin-top: 12px;
+}
+
+.ai-import-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.ai-import-var {
+  font-family: var(--monospaceFontFamily, monospace);
+  font-size: 13px;
+}
+
+.ai-import-meta {
+  font-size: 12px;
+  opacity: 0.7;
 }
 </style>
