@@ -17,6 +17,7 @@ export default [
       '.claude/**',
       // Agent-tooling scratch state; regenerated at will and gitignored.
       '**/.omc/**',
+      '**/.kiro/**',
       '**/out/**',
       '**/dist/**',
       // The website ships with its own ESLint v8 config (React conventions).
