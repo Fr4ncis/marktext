@@ -50,6 +50,8 @@ process.on('exit', () => {
 export interface LaunchResult {
   app: ElectronApplication
   page: Page
+  /** The `--user-data-dir` this instance ran against. Pass it back to relaunch into the same profile. */
+  userDataDir: string
 }
 
 export interface LaunchOptions {
@@ -59,6 +61,17 @@ export interface LaunchOptions {
   // should opt in — otherwise existing specs would silently ignore renderer
   // exceptions that previously surfaced as a dialog (a hidden regression risk).
   suppressErrorDialog?: boolean
+  // Reuse a profile instead of getting a fresh temp one. Only specs that assert
+  // something persisted across a restart need this — sharing a profile between
+  // unrelated specs would let one spec's preferences leak into another.
+  userDataDir?: string
+  // Extra environment for the Electron process, merged over the inherited env.
+  // Used to point an SDK that reads its host from the environment at a stub
+  // server (e.g. ANTHROPIC_BASE_URL).
+  env?: Record<string, string>
+  // Extra Electron/Chromium command-line switches, appended after the app path
+  // so Electron parses them as its own rather than as file arguments.
+  switches?: string[]
 }
 
 export const launchElectron = async(
@@ -69,12 +82,15 @@ export const launchElectron = async(
   const executablePath = getElectronPath()
   // Pass project root as entry so Electron reads package.json and getAppPath() returns project root.
   // Passing out/main/index.js directly bypasses package.json and breaks __static path resolution.
-  const userDataDir = trackTempDir(getTempPath())
-  const args = [projectRoot, '--user-data-dir', userDataDir].concat(userArgs)
+  const userDataDir = options.userDataDir ?? trackTempDir(getTempPath())
+  const args = [projectRoot, '--user-data-dir', userDataDir]
+    .concat(options.switches ?? [])
+    .concat(userArgs)
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
   env.PERF_TESTING = 'true'
   if (options.suppressErrorDialog) env.MARKTEXT_ERROR_INTERACTION = '1'
+  Object.assign(env, options.env ?? {})
   const app = await _electron.launch({
     executablePath,
     args,
@@ -86,7 +102,7 @@ export const launchElectron = async(
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
   await new Promise((resolve) => setTimeout(resolve, 500))
-  return { app, page }
+  return { app, page, userDataDir }
 }
 
 // Capture renderer-process errors that would otherwise pop the "Unexpected
@@ -331,10 +347,10 @@ export const launchWithDoc = async(
   relativeFixture: string,
   options: LaunchOptions = {}
 ): Promise<LaunchResult> => {
-  const { app, page } = await launchElectron([relativeFixture], options)
-  await waitForEditor(page)
-  await waitForMenuReady(app)
-  return { app, page }
+  const launched = await launchElectron([relativeFixture], options)
+  await waitForEditor(launched.page)
+  await waitForMenuReady(launched.app)
+  return launched
 }
 
 export interface LaunchWithMarkdownResult extends LaunchResult {
@@ -346,10 +362,25 @@ export const launchWithMarkdown = async(
   options: LaunchOptions = {}
 ): Promise<LaunchWithMarkdownResult> => {
   const filePath = writeTempMarkdown(markdown)
-  const { app, page } = await launchElectron([filePath], options)
-  await waitForEditor(page)
-  await waitForMenuReady(app)
-  return { app, page, filePath }
+  const launched = await launchElectron([filePath], options)
+  await waitForEditor(launched.page)
+  await waitForMenuReady(launched.app)
+  return { ...launched, filePath }
+}
+
+/**
+ * Reopens `filePath` in a fresh Electron process against the same profile, so a
+ * spec can assert that something written before the restart was persisted.
+ */
+export const relaunchWithDoc = async(
+  filePath: string,
+  userDataDir: string,
+  options: LaunchOptions = {}
+): Promise<LaunchResult> => {
+  const launched = await launchElectron([filePath], { ...options, userDataDir })
+  await waitForEditor(launched.page)
+  await waitForMenuReady(launched.app)
+  return launched
 }
 
 export const sendIpcToRenderer = async(

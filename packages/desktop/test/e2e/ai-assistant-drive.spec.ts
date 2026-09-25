@@ -146,3 +146,67 @@ test('a configured persona is prepended to the system prompt', async() => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('a prompt that names its own persona overrides the default', async() => {
+  // The interesting case is the one where two personas are configured and the
+  // prompt picks the non-default one: a request that silently used the global
+  // default would still look correct in the dialog, and only show up as the
+  // wrong voice in the rewritten text.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'marktext-persona-pick-e2e-'))
+  const defaultPersona = path.join(dir, 'house.md')
+  const promptPersona = path.join(dir, 'legal.md')
+  fs.writeFileSync(defaultPersona, 'You are the in-house style editor. Prefer short sentences.')
+  fs.writeFileSync(promptPersona, 'You are a contracts lawyer. Prefer precise, defensible wording.')
+
+  try {
+    await page.evaluate(
+      (personas) => {
+        window.electron.ipcRenderer.send('mt::set-user-preference', {
+          aiPersonas: [
+            { id: 'house', name: 'House style', filePath: personas.defaultPersona },
+            { id: 'legal', name: 'Legal', filePath: personas.promptPersona }
+          ],
+          aiDefaultPersonaId: 'house',
+          // Shaped like a stored library: the built-in prompt, edited to carry a
+          // persona of its own.
+          aiPrompts: [
+            {
+              id: 'formal',
+              label: 'Make formal',
+              template:
+                'Rewrite the following markdown in a formal, professional register. Preserve the meaning and all markdown formatting.',
+              builtin: true,
+              enabled: true,
+              personaId: 'legal'
+            }
+          ]
+        })
+      },
+      { defaultPersona, promptPersona }
+    )
+    await page.waitForTimeout(700)
+
+    const callsBefore = received.length
+    await waitForEditor(page)
+    await sendIpcToRenderer(app, 'mt::editor-edit-action', 'selectAll')
+    await page.waitForTimeout(400)
+    await sendIpcToRenderer(app, 'mt::ai::run-prompt', 'formal')
+
+    const dialog = page.locator('.el-dialog:has-text("AI ·")')
+    await expect(dialog.locator('textarea')).toHaveValue(REWRITTEN, { timeout: 15000 })
+    expect(received.length).toBeGreaterThan(callsBefore)
+
+    const last = received[received.length - 1] as {
+      messages: Array<{ role: string; content: string }>
+    }
+    const system = last.messages[0].content
+    expect(system.startsWith('You are a contracts lawyer.')).toBe(true)
+    expect(system).not.toContain('in-house style editor')
+    expect(system).toContain('Return only the rewritten excerpt')
+
+    await dialog.getByRole('button', { name: 'Discard' }).click()
+    await expect(dialog).toBeHidden({ timeout: 5000 })
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
