@@ -34,8 +34,11 @@ export default [
       'packages/muya/**',
       'packages/desktop/src/renderer/src/assets/symbolIcon/index.js',
       '**/*.min.json',
-      'test-results/**',
-      'playwright-report/**'
+      // Playwright writes these under packages/desktop, so the patterns have to
+      // match at any depth — an unanchored `test-results/**` only covers the
+      // repo root, which let a run's `.last-run.json` fail lint.
+      '**/test-results/**',
+      '**/playwright-report/**'
     ]
   },
 
