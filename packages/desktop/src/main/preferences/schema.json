@@ -70,6 +70,12 @@
     "description": "General--The language MarkText uses. No default on purpose: the language is auto-detected from the system locale on first start (after app ready), so a schema default would always win over detection.",
     "type": "string"
   },
+  "treePathExcludePatterns": {
+    "description": "General--Glob patterns whose matches the file watcher and the file tree ignore.--internal",
+    "type": "array",
+    "items": { "type": "string" },
+    "default": []
+  },
   "editorFontFamily": {
     "description": "Editor--editor font family",
     "type": "string",
@@ -491,7 +497,8 @@
         "label": { "type": "string" },
         "template": { "type": "string" },
         "builtin": { "type": "boolean" },
-        "enabled": { "type": "boolean" }
+        "enabled": { "type": "boolean" },
+        "personaId": { "type": "string" }
       },
       "required": ["id", "label", "template", "builtin", "enabled"]
     },

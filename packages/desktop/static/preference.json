@@ -80,5 +80,15 @@
   "searchNoIgnore": false,
   "searchFollowSymlinks": true,
 
-  "watcherUsePolling": false
+  "watcherUsePolling": false,
+
+  "aiEnabled": false,
+  "aiProvider": "anthropic",
+  "aiModel": "claude-opus-5",
+  "aiBaseUrl": "",
+  "aiMaxTokens": 8192,
+  "aiTimeoutMs": 60000,
+  "aiPersonas": [],
+  "aiDefaultPersonaId": "",
+  "aiPrompts": []
 }
