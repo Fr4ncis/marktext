@@ -20,19 +20,27 @@ git checkout -b release/vX.Y.0     # e.g. release/v0.19.0
 
 Reuse the same branch for every RC of that minor version (`rc.1`, `rc.2`, …) **and** the eventual stable tag. For follow-ups, just `git checkout release/vX.Y.0` and skip to step 2.
 
-## 2. Bump `package.json`
+## 2. Bump the version
 
-Edit the `version` field — it is the only file you need to change.
+Edit the `version` field in **both** `package.json` and
+`packages/desktop/package.json`, keeping them identical.
 
-| Stage | Version string |
-|---|---|
+`packages/desktop/package.json` is the one that reaches users:
+`electron.vite.config.ts` compiles it into `MARKTEXT_VERSION_STRING`, which is
+what the About dialog, `marktext --version` and crash reports show, and what
+electron-builder names the installers after. The root version is what this doc's
+tags refer to, so a mismatch between the two ships a release whose About dialog
+disagrees with its tag.
+
+| Stage             | Version string                  |
+| ----------------- | ------------------------------- |
 | Release candidate | `0.19.0-rc.1`, `0.19.0-rc.2`, … |
-| Stable | `0.19.0` |
+| Stable            | `0.19.0`                        |
 
 ## 3. Commit and push the branch
 
 ```bash
-git add package.json
+git add package.json packages/desktop/package.json
 git commit -m "chore(release): vX.Y.Z[-rc.N]"
 git push -u origin release/vX.Y.0
 ```
@@ -87,7 +95,7 @@ Confirm:
 ## 8. Post-stable cleanup (after stable `vX.Y.0` ships)
 
 1. Mark the tracking PR from step 5 ready for review and merge into `develop`
-2. Open a follow-up PR bumping `develop`'s `package.json` to the next dev version (e.g. `0.20.0-dev`)
+2. Open a follow-up PR bumping both `package.json` files on `develop` to the next dev version (e.g. `0.21.0-dev`)
 
 ---
 
