@@ -396,3 +396,35 @@ export const sendIpcToRenderer = async(
     { channel, args }
   )
 }
+
+/**
+ * Reports an external disk change the way the main-process watcher does: the
+ * same `mt::update-file` payload (a `loadMarkdownFile` result under
+ * `change.data`), so the renderer runs its real reload path.
+ *
+ * A silent reload additionally needs autoSave on and a clean tab; otherwise the
+ * renderer asks the user to confirm and nothing changes on its own.
+ */
+export const reportExternalFileChange = async(
+  app: ElectronApplication,
+  pathname: string,
+  markdown: string
+): Promise<void> => {
+  await sendIpcToRenderer(app, 'mt::update-file', {
+    type: 'change',
+    change: {
+      pathname,
+      mtimeMs: 1,
+      data: {
+        markdown,
+        filename: path.basename(pathname),
+        pathname,
+        encoding: { encoding: 'utf8', hasBOM: false },
+        lineEnding: 'lf',
+        adjustLineEndingOnSave: false,
+        trimTrailingNewline: 1,
+        isMixedLineEndings: false
+      }
+    }
+  })
+}

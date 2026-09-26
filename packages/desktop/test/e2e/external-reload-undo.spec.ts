@@ -3,6 +3,7 @@ import {
   launchWithMarkdown,
   waitForMenuReady,
   getMarkdownContent,
+  reportExternalFileChange,
   sendIpcToRenderer,
   enterSourceMode
 } from './helpers'
@@ -11,34 +12,6 @@ import {
 // uses (`mt::editor-edit-action` → bus `undo` → editor.undo()).
 const undo = async(app: Parameters<typeof sendIpcToRenderer>[0]): Promise<void> => {
   await sendIpcToRenderer(app, 'mt::editor-edit-action', 'undo')
-}
-
-// Reproduce the watcher's external-change report: the same `mt::update-file`
-// payload shape the main-process watcher sends (a `loadMarkdownFile` result in
-// `change.data`). Drives the real renderer reload path
-// LISTEN_FOR_FILE_CHANGE → loadChange → bus `file-changed` → handleFileChange.
-const reportExternalChange = async(
-  app: Parameters<typeof sendIpcToRenderer>[0],
-  pathname: string,
-  markdown: string
-): Promise<void> => {
-  await sendIpcToRenderer(app, 'mt::update-file', {
-    type: 'change',
-    change: {
-      pathname,
-      mtimeMs: 1,
-      data: {
-        markdown,
-        filename: 'note.md',
-        pathname,
-        encoding: { encoding: 'utf8', hasBOM: false },
-        lineEnding: 'lf',
-        adjustLineEndingOnSave: false,
-        trimTrailingNewline: 1,
-        isMixedLineEndings: false
-      }
-    }
-  })
 }
 
 test.describe('External disk reload — undo restores the pre-change document', () => {
@@ -56,7 +29,7 @@ test.describe('External disk reload — undo restores the pre-change document', 
     await sendIpcToRenderer(app, 'mt::user-preference', { autoSave: true })
     await page.waitForTimeout(100)
 
-    await reportExternalChange(app, filePath, 'new content here\n')
+    await reportExternalFileChange(app, filePath, 'new content here\n')
     await page.waitForTimeout(600)
 
     // The tab now reflects the new on-disk content...
@@ -137,7 +110,7 @@ test.describe('External disk reload — source-mode scroll position survives a s
     // body must still match what we hand `loadChange` so the tab stays clean and
     // the reload applies silently.
     const reloadedBody = longBody + 'tail line\n'
-    await reportExternalChange(app, filePath, reloadedBody)
+    await reportExternalFileChange(app, filePath, reloadedBody)
     await page.waitForTimeout(600)
 
     // The reload landed (content updated) and CodeMirror is still mounted.
