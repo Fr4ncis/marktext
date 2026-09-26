@@ -7,6 +7,15 @@ on:
     # own e2e under packages/muya/e2e/ wired via muya-e2e.yml.
     paths-ignore:
       - 'packages/muya/**'
+  # Also on pushes to the integration branch. A pull_request check runs against
+  # the merge with the base as it was at the time, so two PRs that are each
+  # green can still land a broken develop — and nothing would run the suite
+  # again to say so. This suite is the one that catches those interactions,
+  # since it drives the built app rather than individual modules.
+  push:
+    branches: [develop]
+    paths-ignore:
+      - 'packages/muya/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
