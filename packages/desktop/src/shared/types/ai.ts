@@ -512,6 +512,41 @@ export const renderPromptTemplate = (template: string, selection: string): strin
 }
 
 /**
+ * The styles the comment composer's quick suggestions are generated in.
+ *
+ * Sending one instruction three times tends to come back as three near-copies,
+ * so each request carries a different hint about how far to move from the
+ * original. The hints only steer the degree of change — every one still asks for
+ * the user's instruction to be applied, and the rewrite contract still governs
+ * the output, so any option is safe to paste.
+ */
+export const SUGGESTION_STYLES = [
+  {
+    id: 'minimal',
+    label: 'Minimal',
+    hint: 'Make the smallest change that satisfies the instruction; keep as much of the original wording as possible.'
+  },
+  {
+    id: 'balanced',
+    label: 'Balanced',
+    hint: 'Apply the instruction in a natural, balanced way.'
+  },
+  {
+    id: 'bold',
+    label: 'Bold',
+    hint: 'Apply the instruction boldly; rephrase freely as long as the meaning is kept.'
+  }
+] as const
+
+export type SuggestionStyleId = (typeof SUGGESTION_STYLES)[number]['id']
+
+/** The prompt template for one quick suggestion: the user's instruction, then its style hint. */
+export const buildSuggestionTemplate = (instruction: string, styleId: SuggestionStyleId): string => {
+  const style = SUGGESTION_STYLES.find((candidate) => candidate.id === styleId)
+  return style ? `${instruction.trim()}\n\n${style.hint}` : instruction.trim()
+}
+
+/**
  * Fence between the rendered instruction and the raw selection in the user
  * message. It gives the model an unambiguous boundary so a selection that
  * itself contains prose reading like an instruction cannot bleed into the

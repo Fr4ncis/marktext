@@ -1772,6 +1772,19 @@ const handleAiCommentCreate = (payload: unknown) => {
   if (fileId) aiCommentsStore.SYNC(fileId, updated)
 }
 
+/**
+ * Applies a quick suggestion picked in the composer straight over the selection
+ * it was asked about. It goes through the same guarded splice as the rewrite
+ * dialog, so a document edited while the options were loading fails safe.
+ */
+const handleAiCommentApplySuggestion = async (payload: unknown) => {
+  const anchor = pendingCommentAnchor
+  pendingCommentAnchor = null
+  if (!anchor || anchor.scope !== 'span') return
+  const { replacement } = payload as { replacement: string }
+  await handleAiApplyResult({ range: anchor.range, original: anchor.text, replacement })
+}
+
 const handleAiCommentAccept = async (payload: unknown) => {
   const comment = payload as TrackedAiComment
   if (!comment.suggestion) return
@@ -2244,6 +2257,7 @@ onMounted(() => {
   bus.on('ai-comments::dismiss', handleAiCommentDismiss)
   bus.on('ai-comments::compose-request', handleAiCommentCompose)
   bus.on('ai-comments::create', handleAiCommentCreate)
+  bus.on('ai-comments::apply-suggestion', handleAiCommentApplySuggestion)
   bus.on('history::restore', handleHistoryRestore)
   // A save is the clearest possible "this state mattered" signal.
   unlistenTabSaved = window.electron.ipcRenderer.on('mt::tab-saved', (_event, tabId) => {
@@ -2412,6 +2426,7 @@ onBeforeUnmount(() => {
   bus.off('ai-comments::dismiss', handleAiCommentDismiss)
   bus.off('ai-comments::compose-request', handleAiCommentCompose)
   bus.off('ai-comments::create', handleAiCommentCreate)
+  bus.off('ai-comments::apply-suggestion', handleAiCommentApplySuggestion)
   bus.off('history::restore', handleHistoryRestore)
   unlistenTabSaved?.()
   if (aiCommentScanTimer) clearTimeout(aiCommentScanTimer)

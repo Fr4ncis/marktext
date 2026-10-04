@@ -25,7 +25,40 @@
       :placeholder="placeholder"
       resize="none"
       @keydown.enter.exact.prevent="submit"
+      @keydown.enter.meta.prevent="suggest"
+      @keydown.enter.ctrl.prevent="suggest"
     />
+
+    <ul
+      v-if="suggestions.length"
+      class="suggestions"
+    >
+      <li
+        v-for="option in suggestions"
+        :key="option.id"
+        class="suggestion-option"
+        :class="[`is-${option.status}`]"
+        :role="option.status === 'ready' ? 'button' : undefined"
+        :tabindex="option.status === 'ready' ? 0 : undefined"
+        :title="option.status === 'ready' ? 'Replace the selection with this' : undefined"
+        @click="choose(option)"
+        @keydown.enter.prevent="choose(option)"
+      >
+        <span class="option-label">{{ option.label }}</span>
+        <span
+          v-if="option.status === 'loading'"
+          class="option-text option-pending"
+        >Thinking…</span>
+        <span
+          v-else-if="option.status === 'ready'"
+          class="option-text"
+        >{{ option.text }}</span>
+        <span
+          v-else
+          class="option-text option-failed"
+        >{{ option.error }}</span>
+      </li>
+    </ul>
 
     <footer class="composer-actions">
       <el-radio-group
@@ -48,6 +81,15 @@
         Cancel
       </el-button>
       <el-button
+        v-if="canSuggest"
+        size="small"
+        :disabled="!draft.trim() || suggesting"
+        :title="suggestButtonTitle"
+        @click="suggest"
+      >
+        {{ suggestions.length ? 'Try again' : 'Suggest' }}
+      </el-button>
+      <el-button
         type="primary"
         size="small"
         :disabled="!draft.trim()"
@@ -61,12 +103,25 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import type { AIProviderId, SuggestionStyleId } from '@shared/types/ai'
+import { SUGGESTION_STYLES, buildSuggestionTemplate } from '@shared/types/ai'
 import type { AiCommentKind, AiCommentScope } from '@shared/types/aiComments'
 import bus from '../../bus'
+import { usePreferencesStore } from '@/store/preferences'
+import {
+  describeError,
+  resolvePersonaPath,
+  runCompletion,
+  settingsFromPreferences
+} from '@/services/aiAssistant'
 
 // The Word-style composer: select text, get a card next to it, type an
 // instruction or a note. The editor owns the selection and performs the
 // document edit; this component only collects what the user typed.
+//
+// For an instruction on a span there is also a faster path than a comment:
+// Suggest rewrites the selection three ways right here in the card, and picking
+// one replaces the selection at once — no marker, no trip to the sidebar.
 
 /** Payload the editor sends when the user asks to comment on a selection. */
 interface ComposerRequest {
@@ -85,6 +140,16 @@ const CARD_WIDTH = 320
 /** Rough card height, used only to keep it inside the viewport. */
 const CARD_HEIGHT = 190
 
+interface SuggestionOption {
+  id: SuggestionStyleId
+  label: string
+  status: 'loading' | 'ready' | 'error'
+  text: string
+  error: string
+}
+
+const preferences = usePreferencesStore()
+
 const visible = ref(false)
 const draft = ref('')
 const kind = ref<AiCommentKind>('ai')
@@ -93,6 +158,21 @@ const selection = ref('')
 const position = ref({ top: 0, left: 0 })
 const card = ref<HTMLDivElement | null>(null)
 const input = ref<{ focus: () => void } | null>(null)
+const suggestions = ref<SuggestionOption[]>([])
+
+/** Aborts every suggestion request still in flight. */
+let cancelSuggestions: (() => void) | null = null
+/** Bumped on every run, so a reply from a superseded run is dropped. */
+let suggestionRun = 0
+
+/** Suggestions rewrite a selection, so they need one, and a note never asks the model. */
+const canSuggest = computed(() => scope.value === 'span' && kind.value === 'ai')
+const suggestButtonTitle = computed(() =>
+  suggestions.value.length
+    ? 'Ask for three new options'
+    : 'Rewrite the selection three ways and pick one (⌘/Ctrl+Enter)'
+)
+const suggesting = computed(() => suggestions.value.some((option) => option.status === 'loading'))
 
 const placeholder = computed(() => {
   if (scope.value === 'document') {
@@ -144,7 +224,26 @@ const placeCard = (rect: ComposerRequest['rect'], columnRight: number): void => 
   position.value = { top: clampTop(top), left }
 }
 
+const stopSuggestions = (): void => {
+  cancelSuggestions?.()
+  cancelSuggestions = null
+  suggestionRun++
+  suggestions.value = []
+}
+
+/** The options can grow the card past the bottom of the window; lift it back in. */
+const keepCardInView = (): void => {
+  nextTick(() => {
+    const height = card.value?.getBoundingClientRect().height ?? CARD_HEIGHT
+    const overflow = position.value.top + height + OFFSET - window.innerHeight
+    if (overflow > 0) {
+      position.value = { ...position.value, top: Math.max(OFFSET, position.value.top - overflow) }
+    }
+  })
+}
+
 const reset = (): void => {
+  stopSuggestions()
   visible.value = false
   draft.value = ''
   kind.value = 'ai'
@@ -162,6 +261,71 @@ const submit = (): void => {
   const instruction = draft.value.trim()
   if (!instruction) return
   bus.emit('ai-comments::create', { kind: kind.value, instruction })
+  reset()
+}
+
+const suggest = (): void => {
+  const instruction = draft.value.trim()
+  if (!instruction || !canSuggest.value) return
+  stopSuggestions()
+  const run = suggestionRun
+
+  const settings = settingsFromPreferences(preferences)
+  const personaPath = resolvePersonaPath(preferences, undefined)
+  suggestions.value = SUGGESTION_STYLES.map((style) => ({
+    id: style.id,
+    label: style.label,
+    status: 'loading',
+    text: '',
+    error: ''
+  }))
+  keepCardInView()
+
+  const running = SUGGESTION_STYLES.map((style) =>
+    runCompletion(
+      settings,
+      buildSuggestionTemplate(instruction, style.id),
+      selection.value,
+      personaPath
+    )
+  )
+  cancelSuggestions = () => running.forEach((completion) => completion.cancel())
+
+  running.forEach((completion, index) => {
+    completion.result
+      .then((outcome) => {
+        if (run !== suggestionRun) return
+        const option = suggestions.value[index]
+        const text = outcome.ok ? outcome.text.trim() : ''
+        // Two styles can still land on the same words; one copy is enough.
+        const duplicate = suggestions.value.some(
+          (other) => other !== option && other.status === 'ready' && other.text.trim() === text
+        )
+        if (text && !duplicate) {
+          option.status = 'ready'
+          option.text = outcome.ok ? outcome.text : ''
+        } else {
+          option.status = 'error'
+          if (!outcome.ok) {
+            option.error = describeError(outcome.error, settings.provider as AIProviderId)
+          } else {
+            option.error = duplicate ? 'Same as another option.' : 'The model returned nothing.'
+          }
+        }
+        keepCardInView()
+      })
+      .catch((error: unknown) => {
+        if (run !== suggestionRun) return
+        const option = suggestions.value[index]
+        option.status = 'error'
+        option.error = error instanceof Error ? error.message : String(error)
+      })
+  })
+}
+
+const choose = (option: SuggestionOption): void => {
+  if (option.status !== 'ready') return
+  bus.emit('ai-comments::apply-suggestion', { replacement: option.text })
   reset()
 }
 
@@ -187,6 +351,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopSuggestions()
   bus.off('ai-comments::compose', open)
   document.removeEventListener('mousedown', onPointerDown, true)
 })
@@ -230,10 +395,67 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.suggestions {
+  max-height: 260px;
+  margin: 10px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.suggestion-option {
+  padding: 7px 9px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  border: 1px solid var(--itemBgColor);
+  border-radius: 5px;
+}
+
+.suggestion-option.is-ready {
+  cursor: pointer;
+}
+
+.suggestion-option.is-ready:hover,
+.suggestion-option.is-ready:focus-visible {
+  border-color: var(--themeColor);
+  outline: none;
+}
+
+.option-label {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--editorColor50);
+}
+
+.option-text {
+  color: var(--editorColor);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.option-pending,
+.option-failed {
+  color: var(--editorColor50);
+}
+
 .composer-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
+  row-gap: 8px;
   margin-top: 10px;
+}
+
+/* Kind gets a row to itself: with Suggest beside Cancel and Comment, the
+   card is too narrow for all four controls on one line. */
+.composer-actions .el-radio-group {
+  flex: 1 0 100%;
 }
 
 .composer-actions .spacer {

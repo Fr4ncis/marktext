@@ -3,6 +3,8 @@ import type { AIPrompt } from '@shared/types/ai'
 import {
   BUILTIN_PROMPTS,
   SELECTION_PLACEHOLDER,
+  SUGGESTION_STYLES,
+  buildSuggestionTemplate,
   reconcilePrompts,
   renderPromptTemplate
 } from '@shared/types/ai'
@@ -130,5 +132,19 @@ describe('translate built-ins', () => {
     for (const id of TARGET_LANGUAGE_IDS) {
       expect(result.filter((p) => p.id === id)).toHaveLength(1)
     }
+  })
+})
+
+describe('buildSuggestionTemplate', () => {
+  it('gives every style its own hint after the instruction', () => {
+    const templates = SUGGESTION_STYLES.map((style) =>
+      buildSuggestionTemplate('  use inclusive wording ', style.id)
+    )
+    for (const template of templates) {
+      expect(template.startsWith('use inclusive wording\n\n')).toBe(true)
+    }
+    // Identical requests come back as near-identical options, which is the
+    // thing the hints exist to prevent.
+    expect(new Set(templates).size).toBe(SUGGESTION_STYLES.length)
   })
 })
