@@ -27,6 +27,8 @@ export interface CardOptions {
   seconds?: number
   fontSize?: number
   color?: string
+  /** A font file for ffmpeg's drawtext; defaults to Menlo, which suits terminal output. */
+  font?: string
 }
 
 export class Recorder {
@@ -133,12 +135,12 @@ export class Recorder {
   }
 
   card(lines: string[], options: CardOptions = {}): void {
-    const { seconds = 3.5, fontSize = 30, color = 'white' } = options
+    const { seconds = 3.5, fontSize = 30, color = 'white', font = FONT } = options
     const file = path.join(this.root, `card-${String(this.cards++).padStart(2, '0')}.png`)
     const textFile = `${file}.txt`
     fs.writeFileSync(textFile, `${lines.join('\n')}\n`)
     const draw = [
-      `fontfile=${FONT}`,
+      `fontfile=${font}`,
       `textfile=${textFile}`,
       `fontcolor=${color}`,
       `fontsize=${fontSize}`,
